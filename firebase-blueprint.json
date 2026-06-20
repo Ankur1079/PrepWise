@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile containing name and optionally custom Gemini API credentials",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "geminiEmail": {
+          "type": "string"
+        },
+        "geminiApiKey": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "uid",
+        "name",
+        "email",
+        "createdAt"
+      ]
+    },
+    "InterviewSession": {
+      "title": "InterviewSession",
+      "description": "Completed interview session with full performance metrics feedback details",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "difficulty": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "score": {
+          "type": "number"
+        },
+        "feedback": {
+          "type": "object"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "userId",
+        "role",
+        "difficulty",
+        "topic",
+        "status",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles containing general parameters and settings info"
+    },
+    "/interviews/{interviewId}": {
+      "schema": "InterviewSession",
+      "description": "All completed candidate interviews containing final feedback metrics"
+    }
+  }
+}
