@@ -44,6 +44,48 @@ export default function InterviewCall({
   // Timer states
   const [seconds, setSeconds] = useState(0);
 
+  // Smooth evaluation progress indicators
+  const [evalProgress, setEvalProgress] = useState(0);
+  const [evalPhase, setEvalPhase] = useState("Initializing feedback compiler...");
+
+  useEffect(() => {
+    if (status !== "evaluating") {
+      setEvalProgress(0);
+      setEvalPhase("Initializing feedback compiler...");
+      return;
+    }
+
+    const progressPhases = [
+      { text: "Ingesting transcript & loading dialogue context...", maxProgress: 20 },
+      { text: "Analyzing technical accuracy and correctness...", maxProgress: 45 },
+      { text: "Evaluating communication clarity & tone...", maxProgress: 70 },
+      { text: "Synthesizing positives, areas of improvement & study guides...", maxProgress: 90 },
+      { text: "Preparing final evaluation report card...", maxProgress: 96 }
+    ];
+
+    const interval = setInterval(() => {
+      setEvalProgress((prev) => {
+        const nextProgress = prev + Math.floor(Math.random() * 3) + 1;
+        
+        let selectedPhase = progressPhases[progressPhases.length - 1].text;
+        for (const phase of progressPhases) {
+          if (nextProgress <= phase.maxProgress) {
+            selectedPhase = phase.text;
+            break;
+          }
+        }
+        setEvalPhase(selectedPhase);
+
+        if (nextProgress >= 96) {
+          return 96;
+        }
+        return nextProgress;
+      });
+    }, 220);
+
+    return () => clearInterval(interval);
+  }, [status]);
+
   // Refs for auto-scroll andSpeech recognition
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -417,21 +459,47 @@ export default function InterviewCall({
 
       const feedbackData: InterviewFeedback = await res.json();
 
-      // Store in firestore permanently
-      const interviewDocRef = await addDoc(collection(db, "interviews"), {
-        userId: session.userId,
-        role: session.role,
-        difficulty: session.difficulty,
-        topic: session.topic,
-        status: "completed",
-        score: feedbackData.overallScore,
-        feedback: feedbackData,
-        createdAt: new Date().toISOString(),
-        duration: seconds,
-      });
+      // Complete progress animation beautifully
+      setEvalProgress(100);
+      setEvalPhase("Evaluation report completed successfully! Loading dashboard...");
+      await new Promise(resolve => setTimeout(resolve, 600));
 
-      // Call feedback complete handler
-      onFeedbackComplete(feedbackData);
+      if (session.userId === "guest") {
+        // Save to localStorage
+        const saved = localStorage.getItem("prepwise_trial_sessions");
+        const guestSessions = saved ? JSON.parse(saved) : [];
+        const updatedSessions = guestSessions.map((s: any) => {
+          if (s.id === session.id) {
+            return {
+              ...s,
+              status: "completed",
+              score: feedbackData.overallScore,
+              feedback: feedbackData,
+              createdAt: new Date().toISOString(),
+              duration: seconds
+            };
+          }
+          return s;
+        });
+        localStorage.setItem("prepwise_trial_sessions", JSON.stringify(updatedSessions));
+        onFeedbackComplete(feedbackData);
+      } else {
+        // Store in firestore permanently
+        const interviewDocRef = await addDoc(collection(db, "interviews"), {
+          userId: session.userId,
+          role: session.role,
+          difficulty: session.difficulty,
+          topic: session.topic,
+          status: "completed",
+          score: feedbackData.overallScore,
+          feedback: feedbackData,
+          createdAt: new Date().toISOString(),
+          duration: seconds,
+        });
+
+        // Call feedback complete handler
+        onFeedbackComplete(feedbackData);
+      }
     } catch (err: any) {
       console.error("Evaluation crash:", err);
       alert(`Feedback processing error: ${err.message}. Please retry.`);
@@ -504,13 +572,19 @@ export default function InterviewCall({
       {status === "evaluating" && (
         <div className="flex flex-col items-center justify-center flex-grow py-24 space-y-8">
           <div className="relative p-8 flex flex-col items-center justify-center bg-neutral-900/50 border border-neutral-800 rounded-2xl w-full max-w-lg text-center py-12 shadow-2xl">
-            <RefreshCw className="h-14 w-14 text-purple-400 animate-spin mb-5" />
+            <RefreshCw className="h-14 w-14 text-orange-400 animate-spin mb-5" />
             <h3 className="text-2xl font-display font-extrabold text-neutral-150">Synthesizing Feedback Report</h3>
-            <p className="text-sm text-neutral-400 mt-2.5 max-w-sm leading-relaxed">
-              We are uploading the full interview transcripts for precise category evaluation. Generating strengths, technical recommendations, and problem solving matrices...
+            <p className="text-sm text-orange-400 font-mono text-[11px] uppercase tracking-wider mb-2.5 animate-pulse">
+              {evalProgress}% Completed
             </p>
-            <div className="w-full bg-neutral-950 rounded-full h-1.5 mt-8 overflow-hidden">
-              <div className="bg-purple-500 h-full animate-pulse" style={{ width: "70%" }} />
+            <p className="text-xs text-neutral-400 min-h-[36px] max-w-sm leading-relaxed italic">
+              "{evalPhase}"
+            </p>
+            <div className="w-full bg-neutral-950 rounded-full h-2 mt-6 overflow-hidden border border-neutral-800">
+              <div 
+                className="bg-gradient-to-r from-amber-400 via-orange-500 to-red-600 h-full transition-all duration-300 rounded-full" 
+                style={{ width: `${evalProgress}%` }} 
+              />
             </div>
           </div>
         </div>

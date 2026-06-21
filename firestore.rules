@@ -23,7 +23,8 @@ service cloud.firestore {
 
     // Interviews Collection rules
     match /interviews/{interviewId} {
-      allow read, create: if isSignedIn() && (request.resource == null || request.resource.data.userId == request.auth.uid);
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
   }

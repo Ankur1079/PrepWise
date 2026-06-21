@@ -59,15 +59,18 @@ const DEFAULT_TEMPLATES: InterviewTemplate[] = [
 ];
 
 interface DashboardProps {
+  user: any;
   onStartInterview: (session: InterviewSession) => void;
   onViewFeedback: (feedback: InterviewFeedback, role: string, topic: string, difficulty: string) => void;
+  onShowAuth: () => void;
 }
 
-export default function Dashboard({ onStartInterview, onViewFeedback }: DashboardProps) {
+export default function Dashboard({ user, onStartInterview, onViewFeedback, onShowAuth }: DashboardProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [interviews, setInterviews] = useState<InterviewSession[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
   // Settings edited parameters
   const [editName, setEditName] = useState("");
@@ -84,8 +87,21 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
 
   // Load profile and historical interviews from Firestore
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    if (!user) {
+      // It's a guest! Load trials from localStorage
+      const saved = localStorage.getItem("prepwise_trial_sessions");
+      const parsed = saved ? JSON.parse(saved) : [];
+      setInterviews(parsed);
+      setProfile({
+        uid: "guest",
+        email: "guest@example.com",
+        name: "Guest Explorer",
+        createdAt: new Date().toISOString()
+      } as any);
+      setEditName("Guest Explorer");
+      setLoading(false);
+      return;
+    }
 
     // 1. Fetch User settings profile
     const fetchProfile = async () => {
@@ -140,7 +156,7 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   // Save Settings logic
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -174,12 +190,34 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
 
   // Trigger default template interview
   const triggerTemplateInterview = (tpl: InterviewTemplate) => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      // It's a guest! Load trials and check limits
+      const saved = localStorage.getItem("prepwise_trial_sessions");
+      const guestSessions = saved ? JSON.parse(saved) : [];
+      if (guestSessions.length >= 3) {
+        setIsUpgradeModalOpen(true);
+        return;
+      }
+
+      const guestSession: InterviewSession = {
+        id: `session-${Date.now()}`,
+        userId: "guest",
+        role: tpl.role,
+        difficulty: "Mid Level",
+        topic: tpl.topic,
+        status: "ongoing",
+        createdAt: new Date().toISOString()
+      };
+
+      localStorage.setItem("prepwise_trial_sessions", JSON.stringify([guestSession, ...guestSessions]));
+      onStartInterview(guestSession);
+      return;
+    }
 
     const newSession: InterviewSession = {
       id: `session-${Date.now()}`,
-      userId: user.uid,
+      userId: currentUser.uid,
       role: tpl.role,
       difficulty: "Mid Level",
       topic: tpl.topic,
@@ -192,12 +230,34 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
 
   // Trigger custom interview setup
   const triggerCustomInterview = () => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      // It's a guest! Load trials and check limits
+      const saved = localStorage.getItem("prepwise_trial_sessions");
+      const guestSessions = saved ? JSON.parse(saved) : [];
+      if (guestSessions.length >= 3) {
+        setIsUpgradeModalOpen(true);
+        return;
+      }
+
+      const guestSession: InterviewSession = {
+        id: `session-${Date.now()}`,
+        userId: "guest",
+        role: customRole,
+        difficulty: customDifficulty,
+        topic: customTopic,
+        status: "ongoing",
+        createdAt: new Date().toISOString()
+      };
+
+      localStorage.setItem("prepwise_trial_sessions", JSON.stringify([guestSession, ...guestSessions]));
+      onStartInterview(guestSession);
+      return;
+    }
 
     const newSession: InterviewSession = {
       id: `session-${Date.now()}`,
-      userId: user.uid,
+      userId: currentUser.uid,
       role: customRole,
       difficulty: customDifficulty,
       topic: customTopic,
@@ -233,7 +293,7 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
     });
 
   return (
-    <div className="bg-neutral-950 text-neutral-200 min-h-screen">
+    <div className="bg-transparent text-neutral-200 min-h-screen">
       {/* Top dashboard connection Header */}
       <nav className="border-b border-neutral-900 bg-neutral-950/80 sticky top-0 z-30 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -241,52 +301,109 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
             <div className="relative flex items-center justify-center shrink-0">
               <svg className="h-9 w-9" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#c084fc" />
-                    <stop offset="50%" stopColor="#a855f7" />
-                    <stop offset="100%" stopColor="#10b981" />
+                  {/* Rich orange-yellow gradient for the loop */}
+                  <linearGradient id="logoGrad" x1="20%" y1="10%" x2="80%" y2="90%">
+                    <stop offset="0%" stopColor="#FBBF24" />
+                    <stop offset="45%" stopColor="#F97316" />
+                    <stop offset="100%" stopColor="#DC2626" />
                   </linearGradient>
+                  
+                  {/* Rich orange-red gradient for the vertical stem */}
+                  <linearGradient id="pStemGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#EA580C" />
+                    <stop offset="100%" stopColor="#991B1B" />
+                  </linearGradient>
+
+                  {/* Fold shadow to create 3D depth */}
+                  <linearGradient id="pFoldShadow" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#000000" stopOpacity="0.45" />
+                    <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+                  </linearGradient>
+
                   <filter id="logoGlow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur stdDeviation="5" result="blur" />
+                    <feGaussianBlur stdDeviation="4" result="blur" />
                     <feComposite in="SourceGraphic" in2="blur" operator="over" />
                   </filter>
                 </defs>
-                <circle cx="50" cy="50" r="38" stroke="url(#logoGrad)" strokeWidth="3" strokeDasharray="5 5" className="opacity-40 animate-[spin_40s_linear_infinite]" />
-                <path d="M50 22 C34 22 26 32 26 48 C26 66 38 78 50 78 C62 78 74 66 74 48 C74 32 66 22 50 22 Z" stroke="url(#logoGrad)" strokeWidth="5" strokeLinecap="round" className="opacity-95" filter="url(#logoGlow)" />
-                <path d="M40 50 L48 57 L62 39" stroke="#ffffff" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+
+                {/* Outer pulsing energy accent ring */}
+                <circle cx="50" cy="50" r="42" stroke="url(#logoGrad)" strokeWidth="1.5" strokeDasharray="4 4" className="opacity-25 animate-[spin_60s_linear_infinite]" />
+
+                {/* Left Vertical Stem Ribbon (layered below loop for 3D overlap) */}
+                <path 
+                  d="M 32,35 H 44 V 75 C 44,75 32,75 32,68 Z" 
+                  fill="url(#pStemGrad)"
+                  className="opacity-95"
+                />
+
+                {/* Fold shadow on top of stem */}
+                <path
+                  d="M 32,35 H 44 V 47 H 32 Z"
+                  fill="url(#pFoldShadow)"
+                  className="opacity-60"
+                />
+
+                {/* Main Curved Loop Ribbon (layered on top) */}
+                <path 
+                  d="M 32,24 H 56 C 68,24 76,32 76,43 C 76,54 68,62 56,62 H 32 V 51 H 55 C 60,51 64,47 64,43 C 64,39 60,35 55,35 H 32 Z" 
+                  fill="url(#logoGrad)" 
+                  filter="url(#logoGlow)"
+                  className="opacity-95" 
+                />
+
+                {/* Subtle light reflection highlight */}
+                <path 
+                  d="M 34,26 H 55 C 64,26 70,31 70,41" 
+                  stroke="#FFFFFF" 
+                  strokeWidth="1.2" 
+                  strokeLinecap="round" 
+                  className="opacity-30" 
+                />
               </svg>
             </div>
             <span className="font-display font-black tracking-tight text-2xl bg-gradient-to-r from-neutral-50 via-neutral-150 to-neutral-300 bg-clip-text text-transparent">PrepWise</span>
           </div>
 
           <div className="flex items-center gap-2.5 sm:gap-4">
-            {profile && (
-              <div className="flex items-center gap-2 text-sm text-neutral-400 select-none bg-neutral-900 border border-neutral-800 rounded-full py-1.5 px-3.5 shadow-sm">
-                <User className="h-3.5 w-3.5 text-purple-400" />
-                <span className="font-medium text-neutral-300">{profile.name}</span>
-                {profile.geminiApiKey ? (
-                  <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" title="Custom Key Connection Active" />
-                ) : (
-                  <span className="inline-flex h-2 w-2 rounded-full bg-indigo-400 animate-pulse" title="System Server Activated" />
+            {auth.currentUser ? (
+              <>
+                {profile && (
+                  <div className="flex items-center gap-2 text-sm text-neutral-400 select-none bg-neutral-900 border border-neutral-800 rounded-full py-1.5 px-3.5 shadow-sm">
+                    <User className="h-3.5 w-3.5 text-purple-400" />
+                    <span className="font-medium text-neutral-300">{profile.name}</span>
+                    {profile.geminiApiKey ? (
+                      <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" title="Custom Key Connection Active" />
+                    ) : (
+                      <span className="inline-flex h-2 w-2 rounded-full bg-indigo-400 animate-pulse" title="System Server Activated" />
+                    )}
+                  </div>
                 )}
-              </div>
+
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700 hover:bg-neutral-800/80 transition cursor-pointer shadow-sm"
+                  title="API Integration Settings"
+                >
+                  <Settings className="h-4.5 w-4.5" />
+                </button>
+
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 text-sm hover:bg-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-700 px-4 py-2 rounded-xl transition font-medium cursor-pointer shadow-sm"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Exit</span>
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={onShowAuth}
+                className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-sm font-semibold text-white px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-lg shadow-purple-600/10 hover:scale-[1.01]"
+              >
+                <User className="h-4 w-4" />
+                <span>Sign In</span>
+              </button>
             )}
-
-            <button
-              onClick={() => setShowSettings(true)}
-              className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700 hover:bg-neutral-800/80 transition cursor-pointer shadow-sm"
-              title="API Integration Settings"
-            >
-              <Settings className="h-4.5 w-4.5" />
-            </button>
-
-            <button
-              onClick={handleSignOut}
-              className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 text-sm hover:bg-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-700 px-4 py-2 rounded-xl transition font-medium cursor-pointer shadow-sm"
-            >
-              <LogOut className="h-4 w-4" />
-              <span>Exit</span>
-            </button>
           </div>
         </div>
       </nav>
@@ -478,6 +595,27 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
           </div>
         </div>
 
+        {/* Guest Trial Session Tracker Banner */}
+        {!auth.currentUser && (
+          <div className="rounded-2xl border border-dashed border-purple-500/35 bg-purple-950/5 p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-purple-950/5">
+            <div className="space-y-1 text-left">
+              <h4 className="text-sm font-bold text-neutral-100 flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
+                <span>Guest Trial Tracker: {Math.max(0, 3 - interviews.length)} of 3 Free Interviews Left</span>
+              </h4>
+              <p className="text-neutral-400 text-xs leading-relaxed max-w-3xl">
+                You are currently preparing as a Guest. Start a mock session to evaluate your competence. Register a free account to persist evaluations permanently, unlock progress progression charts, and enjoy unlimited AI interviews.
+              </p>
+            </div>
+            <button
+              onClick={onShowAuth}
+              className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-semibold text-xs text-white shadow-lg shadow-purple-600/15 cursor-pointer shrink-0 transition"
+            >
+              Sign Up / Login to Save Progress
+            </button>
+          </div>
+        )}
+
         {/* Take Interviews Card Templates */}
         <div className="space-y-5">
           <h2 className="text-2xl font-display font-extrabold tracking-tight text-neutral-100">Practice Templates</h2>
@@ -661,6 +799,110 @@ export default function Dashboard({ onStartInterview, onViewFeedback }: Dashboar
                 className="w-1/2 rounded-lg bg-purple-600 hover:bg-purple-500 py-2.5 text-xs font-semibold text-white transition cursor-pointer"
               >
                 Launch Interview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Trial Limit Reached Modal */}
+      {isUpgradeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-950/85 backdrop-blur-md">
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl p-6 relative overflow-hidden shadow-2xl space-y-5">
+            {/* Background elements */}
+            <div className="absolute top-0 right-0 h-40 w-40 bg-purple-600/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
+            <div className="absolute bottom-0 left-0 h-40 w-40 bg-indigo-600/10 rounded-full blur-3xl -ml-16 -mb-16 pointer-events-none" />
+
+            <div className="flex flex-col items-center text-center space-y-4 pt-4">
+              <div className="h-14 w-14 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-center justify-center text-orange-400 shadow-inner">
+                <svg className="h-10 w-10" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    {/* Rich orange-yellow gradient for the loop */}
+                    <linearGradient id="logoGradUpgrade" x1="20%" y1="10%" x2="80%" y2="90%">
+                      <stop offset="0%" stopColor="#FBBF24" />
+                      <stop offset="45%" stopColor="#F97316" />
+                      <stop offset="100%" stopColor="#DC2626" />
+                    </linearGradient>
+                    
+                    {/* Rich orange-red gradient for the vertical stem */}
+                    <linearGradient id="pStemGradUpgrade" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#EA580C" />
+                      <stop offset="100%" stopColor="#991B1B" />
+                    </linearGradient>
+
+                    {/* Fold shadow to create 3D depth */}
+                    <linearGradient id="pFoldShadowUpgrade" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#000000" stopOpacity="0.45" />
+                      <stop offset="100%" stopColor="#000000" stopOpacity="0" />
+                    </linearGradient>
+
+                    <filter id="logoGlowUpgrade" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="4" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                  </defs>
+
+                  {/* Outer pulsing energy accent ring */}
+                  <circle cx="50" cy="50" r="42" stroke="url(#logoGradUpgrade)" strokeWidth="1.5" strokeDasharray="4 4" className="opacity-25 animate-[spin_60s_linear_infinite]" />
+
+                  {/* Left Vertical Stem Ribbon (layered below loop for 3D overlap) */}
+                  <path 
+                    d="M 32,35 H 44 V 75 C 44,75 32,75 32,68 Z" 
+                    fill="url(#pStemGradUpgrade)"
+                    className="opacity-95"
+                  />
+
+                  {/* Fold shadow on top of stem */}
+                  <path
+                    d="M 32,35 H 44 V 47 H 32 Z"
+                    fill="url(#pFoldShadowUpgrade)"
+                    className="opacity-60"
+                  />
+
+                  {/* Main Curved Loop Ribbon (layered on top) */}
+                  <path 
+                    d="M 32,24 H 56 C 68,24 76,32 76,43 C 76,54 68,62 56,62 H 32 V 51 H 55 C 60,51 64,47 64,43 C 64,39 60,35 55,35 H 32 Z" 
+                    fill="url(#logoGradUpgrade)" 
+                    filter="url(#logoGlowUpgrade)"
+                    className="opacity-95" 
+                  />
+
+                  {/* Subtle light reflection highlight */}
+                  <path 
+                    d="M 34,26 H 55 C 64,26 70,31 70,41" 
+                    stroke="#FFFFFF" 
+                    strokeWidth="1.2" 
+                    strokeLinecap="round" 
+                    className="opacity-30" 
+                  />
+                </svg>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-xl font-display font-black tracking-tight text-white">Trial Limit Reached</h3>
+                <p className="text-xs font-semibold text-purple-300 tracking-wider uppercase">Unlock Premium Access</p>
+              </div>
+              <p className="text-xs text-neutral-400 leading-relaxed md:px-2">
+                You've completed your <strong>3 free trial sessions</strong>. Create a professional account to keep practicing with artificial intelligence, save your score reports permanently, and view progress graphs.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsUpgradeModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-neutral-800 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800/60 font-medium transition cursor-pointer"
+              >
+                Close View
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUpgradeModalOpen(false);
+                  onShowAuth();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs text-white font-semibold transition shadow-lg shadow-purple-600/10 cursor-pointer"
+              >
+                Sign In / Sign Up
               </button>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -9,15 +9,80 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
-// Utility to get Gemini API instance
+// Utility to get Gemini API instance with validation to prevent placeholder keys
 function getAIInstance(userApiKey?: string) {
   const key = userApiKey || process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error("No Gemini API key available. Please register your own Gemini API key or set GEMINI_API_KEY.");
+  if (!key || key.trim() === "" || key === "your_actual_api_key_here") {
+    throw new Error("No valid Gemini API key is configured. Please provide a real Gemini API Key beginning with 'AIzaSy' in your environment variables (GEMINI_API_KEY) or inside your registered user profile in the app.");
   }
   return new GoogleGenAI({ apiKey: key });
+}
+
+// Helper to implement automatic retries with exponential backoff for temporary overloaded/high-demand errors, and rotating model fallbacks
+async function generateContentWithRetry(ai: any, params: any, maxRetries = 5, initialDelay = 1500): Promise<any> {
+  const modelsToTry = [
+    params.model,
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-image"
+  ].filter(Boolean);
+
+  let modelIndex = 0;
+  let attempt = 0;
+
+  while (true) {
+    const activeModel = modelsToTry[modelIndex] || params.model;
+    const currentParams = { ...params, model: activeModel };
+
+    try {
+      return await ai.models.generateContent(currentParams);
+    } catch (error: any) {
+      attempt++;
+      const errorMsg = String(error.message || "").toLowerCase();
+      const isRetryable = 
+        error.status === "UNAVAILABLE" || 
+        error.code === 503 ||
+        error.status === 503 ||
+        errorMsg.includes("high demand") ||
+        errorMsg.includes("spikes in demand") ||
+        errorMsg.includes("unavailable") ||
+        errorMsg.includes("overloaded") ||
+        errorMsg.includes("resource_exhausted") ||
+        errorMsg.includes("rate limit") ||
+        error.code === 429;
+
+      if (isRetryable && attempt <= maxRetries) {
+        if (modelsToTry.length > 1) {
+          modelIndex = (modelIndex + 1) % modelsToTry.length;
+        }
+        const delay = initialDelay * Math.pow(1.8, attempt - 1) + Math.random() * 800;
+        console.warn(`Gemini API overloaded or unavailable using model '${activeModel}' on attempt ${attempt}/${maxRetries}. Retrying with model '${modelsToTry[modelIndex]}' in ${Math.round(delay)}ms... Error:`, error.message);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// Helper to provide friendly, user-actionable instructions on connection or authentication failures
+function formatAIError(error: any): string {
+  const msg = error.message || "";
+  if (
+    msg.includes("UNAUTHENTICATED") ||
+    msg.includes("invalid authentication credentials") ||
+    msg.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED") ||
+    msg.includes("OAuth 2") ||
+    msg.includes("API key")
+  ) {
+    return "Gemini API Authentication Failed. Please verify that your GEMINI_API_KEY is correctly set to a valid key (starting with 'AIzaSy') in your Render/hosting environment variables, or configured in your user profile on this app.";
+  }
+  if (msg.includes("high demand") || msg.includes("UNAVAILABLE") || msg.includes("503")) {
+    return "The Gemini AI model is currently experiencing extremely high demand. We attempted automated retries, but we recommend waiting a brief moment and clicking the button again to retry.";
+  }
+  return msg || "Interview AI server error";
 }
 
 // 1. Chat endpoint for interactive interview calls
@@ -52,7 +117,7 @@ Rules of Interaction:
       parts: [{ text: m.text }]
     }));
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: "gemini-3.5-flash",
       contents: formattedContents,
       config: {
@@ -64,7 +129,7 @@ Rules of Interaction:
     res.json({ text: response.text });
   } catch (error: any) {
     console.error("Chat API Error:", error);
-    res.status(500).json({ error: error.message || "Interview AI server error" });
+    res.status(500).json({ error: formatAIError(error) });
   }
 });
 
@@ -84,7 +149,7 @@ app.post("/api/interview/feedback", async (req: express.Request, res: express.Re
       .map((m: any) => `${m.sender === "user" ? "Candidate" : "AI Interviewer"}: ${m.text}`)
       .join("\n\n");
 
-    const analysisPrompt = `You are a high-level technical assessor at PrepWise. Review the following mock interview transcript between the AI Interviewer and the Candidate and output an exhaustive performance review.
+    const analysisPrompt = `You are a high-level technical assessor at PrepWise. Review the following mock interview transcript between the AI Interviewer and the Candidate and output an accurate, concise performance review.
 
 Interview Role: ${difficulty} ${role}
 Target Topic: ${topic}
@@ -92,23 +157,49 @@ Target Topic: ${topic}
 Transcript:
 ${historyText}
 
-Analyze this transcript and respond with a JSON object. Ensure the format matches exactly this TypeScript interface without any extra markdown wrapper or text:
-{
-  "overallScore": number (integer 0 to 100),
-  "technicalScore": number (integer 0 to 100),
-  "communicationScore": number (integer 0 to 100),
-  "problemSolvingScore": number (integer 0 to 100),
-  "positives": string[] (list 3-4 specific constructive positive observations of what candidate did well),
-  "improvements": string[] (list 3-4 actual improvement areas with specific guidance),
-  "detailedAnalysis": string (markdown narrative discussing their technical proficiency, communications, and practical readiness),
-  "suggestedResources": string[] (3 specific book/documentation/course links or topics they must study to master this topic)
-}`;
+Analyze this transcript and respond with structured JSON. Be highly specific but concise. Avoid unnecessary fluff to produce the report incredibly quickly:
+- positives: 3 specific positive points (concise)
+- improvements: 3 actionable improvement areas (concise)
+- detailedAnalysis: a compact 2-paragraph markdown narrative summarizing technical skill and communication readiness.
+- suggestedResources: Exactly 3 high-quality study resources or topics.`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: "gemini-3.5-flash",
       contents: [{ role: "user", parts: [{ text: analysisPrompt }] }],
       config: {
         responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.INTEGER },
+            technicalScore: { type: Type.INTEGER },
+            communicationScore: { type: Type.INTEGER },
+            problemSolvingScore: { type: Type.INTEGER },
+            positives: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
+            improvements: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            },
+            detailedAnalysis: { type: Type.STRING },
+            suggestedResources: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
+          },
+          required: [
+            "overallScore",
+            "technicalScore",
+            "communicationScore",
+            "problemSolvingScore",
+            "positives",
+            "improvements",
+            "detailedAnalysis",
+            "suggestedResources"
+          ]
+        },
         temperature: 0.2,
       }
     });
@@ -133,7 +224,7 @@ Analyze this transcript and respond with a JSON object. Ensure the format matche
     }
   } catch (error: any) {
     console.error("Feedback API Error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate AI performance feedback" });
+    res.status(500).json({ error: formatAIError(error) });
   }
 });
 

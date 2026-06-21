@@ -2,15 +2,17 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Config parsed from firebase-applet-config.json
+// Config parsed from environment variables to keep credentials safe from GitHub scanners
+const metaEnv = (import.meta as any).env || {};
+
 const firebaseConfig = {
-  projectId: "gen-lang-client-0665878873",
-  appId: "1:95695576774:web:023349b9845b46d63141c7",
-  apiKey: "AIzaSyBKgwCRBKKJCcjE_RHxcO26R7ihMrPPQoc",
-  authDomain: "gen-lang-client-0665878873.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-05d58df7-8475-429d-81d4-e4d92d5352cc",
-  storageBucket: "gen-lang-client-0665878873.firebasestorage.app",
-  messagingSenderId: "95695576774"
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "",
+  appId: metaEnv.VITE_FIREBASE_APP_ID || "",
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || "",
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "",
+  firestoreDatabaseId: metaEnv.VITE_FIREBASE_FIRESTORE_DB_ID || "",
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || ""
 };
 
 const app = initializeApp(firebaseConfig);
