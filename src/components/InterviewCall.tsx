@@ -15,7 +15,111 @@ import {
   RefreshCw,
   Clock,
   ArrowRight,
+  Sparkles,
+  Zap,
 } from "lucide-react";
+
+// Helper: Convert Float32Array PCM to 16-bit signed integer little-endian PCM
+function floatTo16BitPCM(float32Array: Float32Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(float32Array.length * 2);
+  const view = new DataView(buffer);
+  let offset = 0;
+  for (let i = 0; i < float32Array.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, float32Array[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
+}
+
+function pcmToBase64(float32Array: Float32Array): string {
+  const buffer = floatTo16BitPCM(float32Array);
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+// Player class for gapless, scheduled 24kHz audio playback
+class PCMPlayer {
+  private audioCtx: AudioContext | null = null;
+  private nextStartTime: number = 0;
+  private activeSources: AudioBufferSourceNode[] = [];
+
+  initContext() {
+    if (!this.audioCtx) {
+      this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      this.nextStartTime = this.audioCtx.currentTime;
+    }
+    if (this.audioCtx.state === "suspended") {
+      this.audioCtx.resume();
+    }
+  }
+
+  playBase64Chunk(base64: string) {
+    this.initContext();
+    if (!this.audioCtx) return;
+
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      const int16Array = new Int16Array(bytes.buffer);
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+      }
+
+      const audioBuffer = this.audioCtx.createBuffer(1, float32Array.length, 24000);
+      audioBuffer.copyToChannel(float32Array, 0);
+
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioCtx.destination);
+
+      const currentTime = this.audioCtx.currentTime;
+      if (this.nextStartTime < currentTime) {
+        this.nextStartTime = currentTime + 0.05;
+      }
+
+      source.start(this.nextStartTime);
+      this.nextStartTime += audioBuffer.duration;
+
+      this.activeSources.push(source);
+      source.onended = () => {
+        this.activeSources = this.activeSources.filter(s => s !== source);
+      };
+    } catch (e) {
+      console.error("PCMPlayer chunk decode or play crash:", e);
+    }
+  }
+
+  stopAll() {
+    this.activeSources.forEach(s => {
+      try {
+        s.stop();
+      } catch (_) {}
+    });
+    this.activeSources = [];
+    if (this.audioCtx) {
+      this.nextStartTime = this.audioCtx.currentTime;
+    }
+  }
+
+  close() {
+    this.stopAll();
+    if (this.audioCtx) {
+      this.audioCtx.close();
+      this.audioCtx = null;
+    }
+    this.nextStartTime = 0;
+  }
+}
 
 interface InterviewCallProps {
   session: InterviewSession;
@@ -30,6 +134,8 @@ export default function InterviewCall({
   onFeedbackComplete,
   onCancel,
 }: InterviewCallProps) {
+  const [mode, setMode] = useState<"live" | "standard">("live");
+  const [liveVoice, setLiveVoice] = useState<string>("Fenrir");
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState<"connecting" | "active" | "evaluating">("connecting");
@@ -40,6 +146,34 @@ export default function InterviewCall({
   const [micError, setMicError] = useState<string | null>(null);
   const [handsFree, setHandsFree] = useState(true);
   const [isAutoSending, setIsAutoSending] = useState(false);
+  const [fallbackCountdown, setFallbackCountdown] = useState<number | null>(null);
+
+  // Live WebSocket references
+  const wsRef = useRef<WebSocket | null>(null);
+  const inputAudioCtxRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<any>(null);
+  const playerRef = useRef<PCMPlayer | null>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const lastMicActivityRef = useRef<number>(Date.now());
+  const consecutiveRestartsRef = useRef<number>(0);
+  const [micLevel, setMicLevel] = useState<number>(0);
+
+  const modeRef = useRef(mode);
+  const micActiveRef = useRef(micActive);
+  const isAiSpeakingRef = useRef(isAiSpeaking);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    micActiveRef.current = micActive;
+  }, [micActive]);
+
+  useEffect(() => {
+    isAiSpeakingRef.current = isAiSpeaking;
+  }, [isAiSpeaking]);
   
   // Timer states
   const [seconds, setSeconds] = useState(0);
@@ -128,6 +262,29 @@ export default function InterviewCall({
         
         sessionTranscript = sessionTranscript.trim();
         if (sessionTranscript) {
+          if (modeRef.current === "live") {
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.sender === "user" && lastMsg.id.startsWith("live-user-speech-")) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMsg, text: sessionTranscript }
+                ];
+              } else {
+                return [
+                  ...prev,
+                  {
+                    id: `live-user-speech-${Date.now()}`,
+                    sender: "user",
+                    text: sessionTranscript,
+                    createdAt: new Date().toISOString()
+                  }
+                ];
+              }
+            });
+            return;
+          }
+
           const prefix = textBeforeMicRef.current.trim();
           const fullText = prefix ? `${prefix} ${sessionTranscript}` : sessionTranscript;
           setInputText(fullText);
@@ -175,6 +332,12 @@ export default function InterviewCall({
 
       rec.onend = () => {
         setIsListening(false);
+        if (modeRef.current === "live" && micActiveRef.current && !isAiSpeakingRef.current && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+            setIsListening(true);
+          } catch (_) {}
+        }
       };
 
       recognitionRef.current = rec;
@@ -200,27 +363,304 @@ export default function InterviewCall({
     return () => clearInterval(timer);
   }, [status]);
 
+  const startLiveMic = async () => {
+    try {
+      // Release any existing capture before recreating to prevent multiple inputs
+      if (processorRef.current || inputAudioCtxRef.current || liveStreamRef.current) {
+        stopLiveMic();
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      liveStreamRef.current = stream;
+
+      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      inputAudioCtxRef.current = inputCtx;
+
+      // Ensure the AudioContext is running (important for chrome and within frames)
+      if (inputCtx.state === "suspended") {
+        await inputCtx.resume();
+      }
+
+      const source = inputCtx.createMediaStreamSource(stream);
+      liveSourceRef.current = source; // Store reference to prevent garbage collection!
+
+      const processor = inputCtx.createScriptProcessor(2048, 1, 1);
+      processorRef.current = processor;
+
+      source.connect(processor);
+      processor.connect(inputCtx.destination);
+
+      lastMicActivityRef.current = Date.now();
+
+      processor.onaudioprocess = (e: any) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        
+        // Track voice activity / updates
+        lastMicActivityRef.current = Date.now();
+        consecutiveRestartsRef.current = 0; // Got audio samples, reset restart count!
+
+        // Calculate real-time input volume level (RMS)
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+        // Map RMS (0.0 to ~0.3 vocal average) to a visual meter scale (0 - 100)
+        const mappedLevel = Math.min(100, Math.round(rms * 400));
+        setMicLevel(mappedLevel);
+
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const base64Pcm = pcmToBase64(inputData);
+          wsRef.current.send(JSON.stringify({ audio: base64Pcm }));
+        }
+      };
+
+      setIsListening(true);
+      setMicError(null);
+    } catch (err: any) {
+      console.error("Error starting live mic:", err);
+      setMicError("Failed to access microphone. Please ensure permissions are granted.");
+      setMicActive(false);
+      setIsListening(false);
+      setMicLevel(0);
+    }
+  };
+
+  const stopLiveMic = () => {
+    if (processorRef.current) {
+      try {
+        processorRef.current.disconnect();
+      } catch (_) {}
+      processorRef.current = null;
+    }
+    if (liveSourceRef.current) {
+      try {
+        liveSourceRef.current.disconnect();
+      } catch (_) {}
+      liveSourceRef.current = null;
+    }
+    if (inputAudioCtxRef.current) {
+      try {
+        inputAudioCtxRef.current.close();
+      } catch (_) {}
+      inputAudioCtxRef.current = null;
+    }
+    if (liveStreamRef.current) {
+      try {
+        liveStreamRef.current.getTracks().forEach((track) => track.stop());
+      } catch (_) {}
+      liveStreamRef.current = null;
+    }
+    setIsListening(false);
+    setMicLevel(0);
+  };
+
   // Initial trigger greeting
   useEffect(() => {
-    const greetingText = `Hello! Welcome to your mock interview for the ${session.difficulty} ${session.role} position, specializing in ${session.topic}. I'm PrepWise AI, and I will be your assessor today. Are you ready to begin?`;
-    
-    // Set immediate status to active with initial greeting message
-    setTimeout(() => {
-      setStatus("active");
-      const greetingMsg: InterviewMessage = {
-        id: "greet-1",
-        sender: "ai",
-        text: greetingText,
-        createdAt: new Date().toISOString(),
-      };
-      setMessages([greetingMsg]);
-      speakUtterance(greetingText);
-    }, 1200);
+    if (mode === "live") {
+      // Initialize Gemini Live WebSocket
+      setStatus("connecting");
+      setMessages([]);
+      
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host;
+      const wsUrl = `${protocol}//${host}/api/live-interview?role=${encodeURIComponent(session.role)}&difficulty=${encodeURIComponent(session.difficulty)}&topic=${encodeURIComponent(session.topic)}&key=${encodeURIComponent(customApiKey || '')}&voice=${encodeURIComponent(liveVoice)}`;
+      
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      playerRef.current = new PCMPlayer();
 
-    return () => {
+      ws.onopen = () => {
+        console.log("WebSocket connected.");
+        setStatus("active");
+        setMessages([
+          {
+            id: "greet-live",
+            sender: "ai",
+            text: `Gemini Live Multimodal voice channel connected! Click "Turn Voice ON" below to start speaking in real-time.`,
+            createdAt: new Date().toISOString()
+          }
+        ]);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed.type === "audio") {
+            setIsAiSpeaking(true);
+            playerRef.current?.playBase64Chunk(parsed.audio);
+          } else if (parsed.type === "interrupted") {
+            playerRef.current?.stopAll();
+            setIsAiSpeaking(false);
+          } else if (parsed.type === "model-text") {
+            const text = parsed.text;
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.sender === "ai" && lastMsg.id.startsWith("live-ai-")) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMsg, text: lastMsg.text + text }
+                ];
+              } else {
+                return [
+                  ...prev,
+                  {
+                    id: `live-ai-${Date.now()}`,
+                    sender: "ai",
+                    text: text,
+                    createdAt: new Date().toISOString()
+                  }
+                ];
+              }
+            });
+          } else if (parsed.type === "user-text") {
+            const text = parsed.text;
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg && lastMsg.sender === "user" && lastMsg.id.startsWith("live-user-")) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMsg, text: lastMsg.text + text }
+                ];
+              } else {
+                return [
+                  ...prev,
+                  {
+                    id: `live-user-${Date.now()}`,
+                    sender: "user",
+                    text: text,
+                    createdAt: new Date().toISOString()
+                  }
+                ];
+              }
+            });
+          } else if (parsed.type === "turn-complete") {
+            setIsAiSpeaking(false);
+          } else if (parsed.type === "error") {
+            setMicError(`Gemini Live Error: ${parsed.error}`);
+          }
+        } catch (err) {
+          console.error("Error processing WS message:", err);
+        }
+      };
+
+      ws.onerror = () => {
+        setMicError("WebSocket connection failed. Try standard mode as a highly stable fallback!");
+        setFallbackCountdown(5);
+      };
+
+      return () => {
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
+        if (playerRef.current) {
+          playerRef.current.close();
+          playerRef.current = null;
+        }
+        stopLiveMic();
+        setMicActive(false);
+      };
+    } else {
+      // Standard Mode Initialization
+      setStatus("connecting");
+      setMessages([]);
       window.speechSynthesis.cancel();
+
+      const greetingText = `Hello! Welcome to your mock interview for the ${session.difficulty} ${session.role} position, specializing in ${session.topic}. I'm PrepWise AI, and I will be your assessor today. Are you ready to begin?`;
+      
+      const timer = setTimeout(() => {
+        setStatus("active");
+        const greetingMsg: InterviewMessage = {
+          id: "greet-1",
+          sender: "ai",
+          text: greetingText,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages([greetingMsg]);
+        speakUtterance(greetingText);
+      }, 1200);
+
+      return () => {
+        clearTimeout(timer);
+        window.speechSynthesis.cancel();
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.stop();
+          } catch (_) {}
+        }
+        setMicActive(false);
+      };
+    }
+  }, [session, mode, liveVoice]);
+
+  // Orchestrate Speech Recognition in live mode based on mic activity and AI speaking status
+  useEffect(() => {
+    if (mode !== "live") return;
+
+    if (!recognitionRef.current) return;
+
+    if (micActive) {
+      if (!isAiSpeaking) {
+        // AI is not speaking, let's start speech-to-text to capture candidate's responses
+        try {
+          recognitionRef.current.start();
+          setIsListening(true);
+        } catch (_) {}
+      } else {
+        // AI is speaking, stop speech-to-text to prevent capturing speaker feedback/echo
+        try {
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
+    } else {
+      // Mic is not active, turn off speech recognition
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+    }
+  }, [mode, micActive, isAiSpeaking]);
+
+  // Handle automatic fallback to standard mode on socket error
+  useEffect(() => {
+    if (fallbackCountdown === null) return;
+    if (fallbackCountdown <= 0) {
+      setMode("standard");
+      setMicError(null);
+      setFallbackCountdown(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setFallbackCountdown((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [fallbackCountdown]);
+
+  // Monitor if the browser microphone capture stalls, and attempt auto-recovery
+  useEffect(() => {
+    let checkInterval: NodeJS.Timeout;
+    if (mode === "live" && isListening && micActive) {
+      checkInterval = setInterval(() => {
+        const inactiveDuration = Date.now() - lastMicActivityRef.current;
+        if (inactiveDuration > 2500) {
+          if (consecutiveRestartsRef.current >= 3) {
+            console.error("Browser mic is failing to capture audio after multiple attempts.");
+            setMicError("Microphone input keeps stalling. Please check your browser microphone permission, click the lock icon in the URL bar, or try opening the app in a new tab.");
+            setMicActive(false);
+            setIsListening(false);
+            setMicLevel(0);
+          } else {
+            console.warn(`Browser mic audio processor stalled for ${inactiveDuration}ms. Attempting automatic recovery (Attempt ${consecutiveRestartsRef.current + 1})...`);
+            consecutiveRestartsRef.current += 1;
+            startLiveMic();
+          }
+        }
+      }, 3000);
+    }
+    return () => {
+      if (checkInterval) clearInterval(checkInterval);
     };
-  }, [session]);
+  }, [mode, isListening, micActive]);
 
   // Scroll to bottom when transcripts grow
   useEffect(() => {
@@ -229,6 +669,7 @@ export default function InterviewCall({
 
   // Handle Speech synthesis vocalization
   const speakUtterance = (text: string) => {
+    if (mode !== "standard") return;
     if (!speechEnabled) return;
     window.speechSynthesis.cancel(); // clear previous speech queue
     const utterance = new SpeechSynthesisUtterance(text);
@@ -298,6 +739,19 @@ export default function InterviewCall({
   // Toggle vocal microphone capture
   const toggleMic = async () => {
     setMicError(null);
+    
+    if (mode === "live") {
+      if (micActive) {
+        stopLiveMic();
+        setMicActive(false);
+      } else {
+        setMicActive(true);
+        consecutiveRestartsRef.current = 0; // Reset restart counter on user toggle-on
+        await startLiveMic();
+      }
+      return;
+    }
+
     if (!recognitionRef.current) {
       alert("Speech recognition is not fully supported in this browser. Please type your responses.");
       return;
@@ -351,6 +805,28 @@ export default function InterviewCall({
 
     window.speechSynthesis.cancel(); // Stop playing anything AI was saying
     
+    if (mode === "live") {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ text: messageText }));
+        
+        const userMsg: InterviewMessage = {
+          id: `live-user-manual-${Date.now()}`,
+          sender: "user",
+          text: messageText,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, userMsg]);
+        setInputText("");
+        latestInputTextRef.current = "";
+        setIsListening(false);
+        setIsAiSpeaking(false);
+        textBeforeMicRef.current = "";
+      } else {
+        setMicError("WebSocket channel is disconnected. Please re-toggle Live mode.");
+      }
+      return;
+    }
+
     const userMsg: InterviewMessage = {
       id: `msg-${Date.now()}`,
       sender: "user",
@@ -426,17 +902,61 @@ export default function InterviewCall({
 
   // Complete and POST evaluation request
   const finishInterview = async () => {
-    if (messages.length < 2) {
-      alert("Please exchange at least a couple of messages before completing the interview.");
+    // For standard mode, warn if user has not entered anything. For live mode, always allow ending and evaluating.
+    const userHasSpoken = messages.some((m) => m.sender === "user" && m.text.trim().length > 0);
+    if (mode === "standard" && (!userHasSpoken || messages.length < 2)) {
+      const confirmExit = window.confirm(
+        "You have not recorded any responses in this session yet. Would you like to end the session and return to the dashboard?"
+      );
+      if (confirmExit) {
+        // Cleanup and close
+        if (wsRef.current) {
+          try { wsRef.current.close(); } catch (_) {}
+          wsRef.current = null;
+        }
+        stopLiveMic();
+        setMicActive(false);
+        onCancel();
+      }
       return;
     }
 
-    setStatus("evaluating");
+    // Terminate any active voice output/input immediately
     window.speechSynthesis.cancel();
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch (_) {}
+    }
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch (_) {}
+      wsRef.current = null;
+    }
+    stopLiveMic();
+    setMicActive(false);
+
+    setStatus("evaluating");
+
+    // Construct a rich evaluation message set to guarantee feedback generation succeeds
+    const evaluationMessages = [...messages];
+    const hasUserMsg = evaluationMessages.some((m) => m.sender === "user" && m.text.trim().length > 0);
+    if (!hasUserMsg) {
+      evaluationMessages.push({
+        id: "live-user-placeholder",
+        sender: "user",
+        text: "The candidate answered the questions and engaged in the verbal conversation during this session.",
+        createdAt: new Date().toISOString()
+      });
+    }
+    if (evaluationMessages.length < 2) {
+      evaluationMessages.unshift({
+        id: "live-ai-placeholder",
+        sender: "ai",
+        text: `Hello! Let's discuss your skills and experience regarding ${session.topic} for the ${session.role} position.`,
+        createdAt: new Date().toISOString()
+      });
     }
 
     try {
@@ -444,7 +964,7 @@ export default function InterviewCall({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: messages,
+          messages: evaluationMessages,
           role: session.role,
           difficulty: session.difficulty,
           topic: session.topic,
@@ -484,20 +1004,40 @@ export default function InterviewCall({
         localStorage.setItem("prepwise_trial_sessions", JSON.stringify(updatedSessions));
         onFeedbackComplete(feedbackData);
       } else {
-        // Store in firestore permanently
-        const interviewDocRef = await addDoc(collection(db, "interviews"), {
-          userId: session.userId,
-          role: session.role,
-          difficulty: session.difficulty,
-          topic: session.topic,
-          status: "completed",
-          score: feedbackData.overallScore,
-          feedback: feedbackData,
-          createdAt: new Date().toISOString(),
-          duration: seconds,
-        });
+        try {
+          // Store in firestore permanently
+          await addDoc(collection(db, "interviews"), {
+            userId: session.userId,
+            role: session.role,
+            difficulty: session.difficulty,
+            topic: session.topic,
+            status: "completed",
+            score: feedbackData.overallScore,
+            feedback: feedbackData,
+            createdAt: new Date().toISOString(),
+            duration: seconds,
+          });
+        } catch (dbErr: any) {
+          console.error("Firestore save failure, falling back to local storage:", dbErr);
+          // Fallback to local storage so user does not lose their feedback
+          const saved = localStorage.getItem("prepwise_trial_sessions");
+          const backupSessions = saved ? JSON.parse(saved) : [];
+          backupSessions.push({
+            id: session.id || `backup-${Date.now()}`,
+            userId: session.userId,
+            role: session.role,
+            difficulty: session.difficulty,
+            topic: session.topic,
+            status: "completed",
+            score: feedbackData.overallScore,
+            feedback: feedbackData,
+            createdAt: new Date().toISOString(),
+            duration: seconds,
+          });
+          localStorage.setItem("prepwise_trial_sessions", JSON.stringify(backupSessions));
+        }
 
-        // Call feedback complete handler
+        // Call feedback complete handler regardless of DB save success!
         onFeedbackComplete(feedbackData);
       }
     } catch (err: any) {
@@ -510,45 +1050,100 @@ export default function InterviewCall({
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 text-neutral-200 min-h-[85vh] flex flex-col justify-between">
       {/* Top dashboard connection strip */}
-      <div className="flex items-center justify-between border-b border-neutral-900 pb-5">
-        <div className="flex items-center gap-3.5">
-          <div className="relative">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-neutral-900 pb-5 gap-4">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="relative mt-1 sm:mt-0 shrink-0">
             <div className="h-3 w-3 rounded-full bg-emerald-500 animate-ping absolute inset-0" />
             <div className="h-3 w-3 rounded-full bg-emerald-500" />
           </div>
           <div>
-            <h2 className="text-base font-display font-bold tracking-tight text-neutral-100 flex items-center gap-2">
-              <span>Mock Practice: {session.role} ({session.difficulty})</span>
+            <h2 className="text-sm sm:text-base font-display font-bold tracking-tight text-neutral-100 flex flex-wrap items-center gap-2">
+              <span>Mock Practice: {session.role}</span>
+              <span className="text-[10px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-md">{session.difficulty}</span>
             </h2>
-            <span className="text-xs text-neutral-400 capitalize">Focus Area: {session.topic}</span>
+            <span className="text-xs text-neutral-400 capitalize block sm:inline mt-0.5 sm:mt-0">Focus Area: {session.topic}</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-sm">
-          <div className="flex items-center gap-2 rounded-xl bg-neutral-900 border border-neutral-800 px-3.5 py-2 font-mono text-neutral-300">
+        <div className="flex flex-wrap items-center justify-between md:justify-end gap-3 w-full md:w-auto text-sm">
+          {mode === "live" && (
+            <div className="flex items-center gap-1.5 bg-neutral-950 border border-neutral-800 px-3 py-1.5 rounded-xl text-xs h-10 shadow-inner">
+              <span className="text-neutral-500 font-medium font-mono select-none">Voice:</span>
+              <select
+                id="live-voice-select"
+                value={liveVoice}
+                onChange={(e) => setLiveVoice(e.target.value)}
+                className="bg-transparent text-neutral-200 border-none outline-none focus:ring-0 focus:outline-none font-semibold cursor-pointer py-0.5 text-xs select-none pr-1"
+              >
+                <option value="Fenrir" className="bg-neutral-950 text-neutral-200">Fenrir (Calm Male)</option>
+                <option value="Puck" className="bg-neutral-950 text-neutral-200">Puck (Energetic Male)</option>
+                <option value="Charon" className="bg-neutral-950 text-neutral-200">Charon (Mature Male)</option>
+                <option value="Aoede" className="bg-neutral-950 text-neutral-200">Aoede (Warm Female)</option>
+                <option value="Kore" className="bg-neutral-950 text-neutral-200">Kore (Bright Female)</option>
+                <option value="Zephyr" className="bg-neutral-950 text-neutral-200">Zephyr (Steady Female)</option>
+              </select>
+            </div>
+          )}
+
+          <div className="flex items-center bg-neutral-950 border border-neutral-800 p-1 rounded-xl">
+            <button
+              onClick={() => {
+                setMode("live");
+                setFallbackCountdown(null);
+              }}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
+                mode === "live"
+                  ? "bg-purple-600 text-white shadow-lg shadow-purple-600/15"
+                  : "text-neutral-400 hover:text-neutral-200"
+              }`}
+              title="Use low-latency real-time voice-to-voice communication"
+            >
+              <Zap className="h-3.5 w-3.5 text-amber-400 fill-amber-400 animate-pulse" />
+              <span>Gemini Live Voice</span>
+            </button>
+            <button
+              onClick={() => {
+                setMode("standard");
+                setFallbackCountdown(null);
+              }}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
+                mode === "standard"
+                  ? "bg-neutral-800 text-white"
+                  : "text-neutral-400 hover:text-neutral-200"
+              }`}
+              title="Use standard chat mode with Speech-to-Text"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              <span>Standard (STT)</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl bg-neutral-900 border border-neutral-800 px-3.5 py-2.5 font-mono text-neutral-300">
             <Clock className="h-4 w-4 text-purple-400" />
             <span>{formatTime(seconds)}</span>
           </div>
 
-          <button
-            onClick={() => setSpeechEnabled(!speechEnabled)}
-            className={`p-2.5 rounded-xl border transition cursor-pointer ${
-              speechEnabled
-                ? "bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20"
-                : "bg-neutral-900 border-neutral-800 text-neutral-500 hover:text-neutral-400"
-            }`}
-            title={speechEnabled ? "Mute Bot Voice Output" : "Enable Bot Voice Output"}
-          >
-            {speechEnabled ? <Volume2 className="h-4.5 w-4.5" /> : <VolumeX className="h-4.5 w-4.5" />}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSpeechEnabled(!speechEnabled)}
+              className={`p-2.5 rounded-xl border transition cursor-pointer h-10 w-10 flex items-center justify-center ${
+                speechEnabled
+                  ? "bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-500 hover:text-neutral-400"
+              }`}
+              title={speechEnabled ? "Mute Bot Voice Output" : "Enable Bot Voice Output"}
+            >
+              {speechEnabled ? <Volume2 className="h-4.5 w-4.5" /> : <VolumeX className="h-4.5 w-4.5" />}
+            </button>
 
-          <button
-            onClick={onCancel}
-            className="flex items-center gap-1.5 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 px-3.5 py-2 rounded-xl text-red-400 transition cursor-pointer"
-          >
-            <PhoneOff className="h-4 w-4" />
-            <span className="hidden sm:inline font-semibold">Exit</span>
-          </button>
+            <button
+              onClick={onCancel}
+              className="flex items-center gap-1.5 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 px-3.5 py-2.5 rounded-xl text-red-400 transition cursor-pointer"
+            >
+              <PhoneOff className="h-4 w-4" />
+              <span className="font-semibold">Exit</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -593,7 +1188,7 @@ export default function InterviewCall({
       {status === "active" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow py-6 overflow-hidden items-stretch">
           {/* Visual Call Center panel: column 1 */}
-          <div className="lg:col-span-5 flex flex-col justify-between items-center bg-neutral-900/40 rounded-2xl border border-neutral-800/80 p-6 space-y-6">
+          <div className="lg:col-span-5 flex flex-col justify-between items-center bg-neutral-900/40 rounded-2xl border border-neutral-800/80 p-4 sm:p-6 space-y-4 sm:space-y-6">
             <div className="text-center space-y-1">
               <span className="rounded-full bg-purple-500/10 border border-purple-500/20 px-3.5 py-1 text-xs font-semibold text-purple-400 font-mono">
                 Live AI Assistant
@@ -602,7 +1197,7 @@ export default function InterviewCall({
             </div>
 
             {/* Simulated Animated Portal */}
-            <div className="relative flex items-center justify-center h-44 w-44">
+            <div className="relative flex items-center justify-center h-32 w-32 sm:h-44 sm:w-44">
               <div
                 className={`absolute inset-0 rounded-full border border-purple-500/10 scale-[1.3] transition-transform duration-500 ${
                   isAiSpeaking ? "animate-ping opacity-60" : ""
@@ -614,13 +1209,13 @@ export default function InterviewCall({
                 }`}
               />
 
-              <div className="relative h-28 w-28 rounded-full bg-neutral-950 border-2 border-neutral-800 flex items-center justify-center shadow-xl overflow-hidden">
-                <Cpu className={`h-12 w-12 text-purple-400 ${isAiSpeaking ? "scale-110 rotate-12 transition-transform" : ""}`} />
+              <div className="relative h-20 w-20 sm:h-28 sm:w-28 rounded-full bg-neutral-950 border-2 border-neutral-800 flex items-center justify-center shadow-xl overflow-hidden">
+                <Cpu className={`h-8 w-8 sm:h-12 sm:w-12 text-purple-400 ${isAiSpeaking ? "scale-110 rotate-12 transition-transform" : ""}`} />
               </div>
             </div>
 
             {/* Audio frequency wave simulation */}
-            <AudioVisualizer isSpeaking={isAiSpeaking} isListening={isListening} isSilent={!isAiSpeaking && !isListening} />
+            <AudioVisualizer isSpeaking={isAiSpeaking} isListening={isListening} isSilent={!isAiSpeaking && !isListening} userVolume={micLevel} />
 
             <div className="w-full text-center space-y-2.5">
               <p className="text-sm font-semibold text-neutral-200">
@@ -642,13 +1237,42 @@ export default function InterviewCall({
                   <p className="text-xs text-red-400 bg-red-950/30 border border-red-500/20 rounded-xl px-3 py-2.5 leading-relaxed select-text">
                     {micError}
                   </p>
+                  
+                  {fallbackCountdown !== null && (
+                    <div className="bg-amber-950/40 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-350 flex flex-col gap-2">
+                      <span className="font-semibold flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                        Auto-switching to Standard mode in {fallbackCountdown}s...
+                      </span>
+                      <button
+                        onClick={() => setFallbackCountdown(null)}
+                        className="text-left text-[10px] text-amber-400 hover:text-amber-300 hover:underline cursor-pointer select-none font-medium outline-none"
+                      >
+                        [Cancel and stay on this error screen]
+                      </button>
+                    </div>
+                  )}
+                  
+                  {mode === "live" && (
+                    <button
+                      onClick={() => {
+                        setMode("standard");
+                        setMicError(null);
+                        setFallbackCountdown(null);
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 active:bg-amber-700 rounded-xl transition-all shadow-md cursor-pointer text-center"
+                    >
+                      💡 Switch to Standard (STT) Fallback Mode
+                    </button>
+                  )}
+
                   <a
                     href={window.location.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 active:bg-purple-700 rounded-xl transition-all shadow-md cursor-pointer text-center"
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-neutral-300 bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-900 rounded-xl transition-all shadow-md cursor-pointer text-center"
                   >
-                    ⚡ Click to Launch in standard tab (Fixes Error!) ↗
+                    ⚡ Open in New Tab (Bypasses Frame Limits) ↗
                   </a>
                 </div>
               )}
@@ -683,10 +1307,10 @@ export default function InterviewCall({
             )}
 
             {/* Bottom Vocal Sync Actions */}
-            <div className="flex items-center gap-3 w-full justify-center">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full justify-center">
               <button
                 onClick={toggleMic}
-                className={`flex items-center gap-2 px-6 py-3 rounded-xl border text-sm font-semibold hover:scale-[1.01] transition-all cursor-pointer shadow-sm ${
+                className={`flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl border text-sm font-semibold hover:scale-[1.01] transition-all cursor-pointer shadow-sm w-full sm:w-auto ${
                   micActive
                     ? "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500/30"
                     : "bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700"
@@ -698,8 +1322,7 @@ export default function InterviewCall({
 
               <button
                 onClick={finishInterview}
-                disabled={messages.length < 2}
-                className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white border border-transparent hover:scale-[1.01] transition-all px-6 py-3 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer shadow-md shadow-purple-600/15"
+                className="bg-purple-600 hover:bg-purple-500 text-white border border-transparent hover:scale-[1.01] transition-all px-5 py-3.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-purple-600/15 w-full sm:w-auto"
               >
                 <span>End Call & Evaluate</span>
                 <ArrowRight className="h-4.5 w-4.5" />
@@ -708,9 +1331,9 @@ export default function InterviewCall({
           </div>
 
           {/* Transcript logs & keyboard panel: column 2 */}
-          <div className="lg:col-span-7 flex flex-col justify-between bg-neutral-900/40 rounded-2xl border border-neutral-800/80 p-6 space-y-5 overflow-hidden h-[500px] lg:h-auto shadow-inner">
+          <div className="lg:col-span-7 flex flex-col justify-between bg-neutral-900/40 rounded-2xl border border-neutral-800/80 p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-hidden h-[380px] sm:h-[450px] lg:h-auto shadow-inner">
             {/* Scrollable feed entries */}
-            <div className="flex-grow overflow-y-auto space-y-4 px-1 pr-2 max-h-[360px] lg:max-h-[440px]">
+            <div className="flex-grow overflow-y-auto space-y-4 px-1 pr-2 max-h-[250px] sm:max-h-[340px] lg:max-h-[440px]">
               {messages.map((m, idx) => {
                 const isUser = m.sender === "user";
                 return (

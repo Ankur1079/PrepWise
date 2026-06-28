@@ -72,6 +72,72 @@
         "status",
         "createdAt"
       ]
+    },
+    "CustomTemplate": {
+      "title": "CustomTemplate",
+      "description": "Custom practice template added by the user",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "userId",
+        "role",
+        "topic",
+        "description",
+        "createdAt"
+      ]
+    },
+    "UserFeedback": {
+      "title": "UserFeedback",
+      "description": "User experience feedback containing rating, improvements, and error notes",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "userEmail": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "string"
+        },
+        "improvements": {
+          "type": "string"
+        },
+        "difficultSteps": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rating",
+        "improvements",
+        "difficultSteps",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -82,6 +148,14 @@
     "/interviews/{interviewId}": {
       "schema": "InterviewSession",
       "description": "All completed candidate interviews containing final feedback metrics"
+    },
+    "/custom_templates/{templateId}": {
+      "schema": "CustomTemplate",
+      "description": "Custom practice templates created by the user"
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "UserFeedback",
+      "description": "User experience feedback submissions"
     }
   }
 }

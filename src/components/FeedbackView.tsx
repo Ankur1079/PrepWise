@@ -41,8 +41,8 @@ export default function FeedbackView({
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-4 py-8 text-neutral-200">
       {/* Top action header */}
-      <div className="flex items-center justify-between border-b border-neutral-900 pb-5">
-        <div className="space-y-1.5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-neutral-900 pb-6">
+        <div className="space-y-2">
           <button
             onClick={onBack}
             className="flex items-center gap-2 text-sm text-neutral-400 hover:text-white transition group mb-1 cursor-pointer"
@@ -50,16 +50,16 @@ export default function FeedbackView({
             <ArrowLeft className="h-4 w-4 transform group-hover:-translate-x-1 transition-transform" />
             <span>Back to Dashboard</span>
           </button>
-          <h1 className="text-3xl sm:text-4xl font-display font-extrabold tracking-tight text-neutral-100">Full Interview Assessment</h1>
-          <p className="text-sm sm:text-base text-neutral-400">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-display font-extrabold tracking-tight text-neutral-100">Full Interview Assessment</h1>
+          <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed">
             Performance breakdown for <span className="text-purple-400 font-semibold">{difficulty} {role}</span> focusing on <span className="text-purple-400 font-semibold">{topic}</span>
           </p>
         </div>
 
-        <div className="flex items-center gap-4 shrink-0">
-          <div className={`flex flex-col items-center justify-center rounded-2xl border p-4 sm:p-5 text-center shadow-lg ${getScoreColor(feedback.overallScore)}`}>
-            <span className="text-3xl sm:text-4xl font-black font-mono">{feedback.overallScore}</span>
-            <span className="text-[10px] uppercase font-bold tracking-widest mt-1 text-neutral-400 font-mono">Overall Score</span>
+        <div className="flex items-center gap-4 shrink-0 w-full md:w-auto">
+          <div className={`flex md:flex-col items-center justify-between md:justify-center rounded-2xl border p-4 sm:p-5 text-center shadow-lg w-full md:w-28 ${getScoreColor(feedback.overallScore)}`}>
+            <span className="text-2xl sm:text-3xl md:text-4xl font-black font-mono">{feedback.overallScore}%</span>
+            <span className="text-[9px] md:text-[10px] uppercase font-bold tracking-widest md:mt-1 text-neutral-400 font-mono">Overall Score</span>
           </div>
         </div>
       </div>

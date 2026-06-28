@@ -27,5 +27,18 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
+
+    // Custom Templates Collection rules
+    match /custom_templates/{templateId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Feedbacks Collection rules
+    match /feedbacks/{feedbackId} {
+      allow create: if true;
+      allow read, delete: if isSignedIn() && request.auth.token.email == "ankuryadav1079@gmail.com";
+    }
   }
 }

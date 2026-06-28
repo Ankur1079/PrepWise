@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0665878873",
-  "appId": "1:95695576774:web:023349b9845b46d63141c7",
-  "apiKey": "AIzaSyBKgwCRBKKJCcjE_RHxcO26R7ihMrPPQoc",
-  "authDomain": "gen-lang-client-0665878873.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-05d58df7-8475-429d-81d4-e4d92d5352cc",
-  "storageBucket": "gen-lang-client-0665878873.firebasestorage.app",
-  "messagingSenderId": "95695576774",
+  "projectId": "prepwise-app-25ffb",
+  "appId": "1:680012099236:web:8acfde285d53fe4e404031",
+  "apiKey": "AIzaSyDsVAhhnhCfc3xyVlxKiAb7JwizoPGUWl0",
+  "authDomain": "prepwise-app-25ffb.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "prepwise-app-25ffb.firebasestorage.app",
+  "messagingSenderId": "680012099236",
   "measurementId": ""
 }

@@ -13,6 +13,8 @@ import { doc, setDoc, getDoc } from "firebase/firestore";
 import { z } from "zod";
 import { Shield, Sparkles, User, Key, Mail, Lock, LogIn, ArrowRight } from "lucide-react";
 
+import { UserProfile } from "../types";
+
 // Register schema with Zod
 const signUpSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters long"),
@@ -33,7 +35,7 @@ const signInSchema = z.object({
 });
 
 interface AuthProps {
-  onAuthSuccess: () => void;
+  onAuthSuccess: (profile?: UserProfile) => void;
   onCancel?: () => void;
 }
 
@@ -58,17 +60,21 @@ export default function Auth({ onAuthSuccess, onCancel }: AuthProps) {
           const userDocRef = doc(db, "users", result.user.uid);
           const userDocSnap = await getDoc(userDocRef);
           
+          let profileData: UserProfile;
           if (!userDocSnap.exists()) {
-            await setDoc(userDocRef, {
+            profileData = {
               uid: result.user.uid,
               name: result.user.displayName || "Candidate Pro",
               email: result.user.email || "",
               geminiEmail: result.user.email || "",
               geminiApiKey: "",
               createdAt: new Date().toISOString(),
-            });
+            };
+            await setDoc(userDocRef, profileData);
+          } else {
+            profileData = userDocSnap.data() as UserProfile;
           }
-          onAuthSuccess();
+          onAuthSuccess(profileData);
         }
       } catch (err: any) {
         console.error("Redirect Auth Error:", err);
@@ -87,6 +93,8 @@ export default function Auth({ onAuthSuccess, onCancel }: AuthProps) {
     setIsLoading(true);
 
     try {
+      let finalProfile: UserProfile | undefined;
+      
       if (isSignUp) {
         // Validate with Zod
         const valData = signUpSchema.parse({
@@ -103,22 +111,30 @@ export default function Auth({ onAuthSuccess, onCancel }: AuthProps) {
           valData.password
         );
 
-        // Store user profile details in Firestore
-        await setDoc(doc(db, "users", userCredential.user.uid), {
+        finalProfile = {
           uid: userCredential.user.uid,
           name: valData.name,
           email: valData.email,
           geminiEmail: valData.geminiEmail || "",
           geminiApiKey: valData.geminiApiKey || "",
           createdAt: new Date().toISOString(),
-        });
+        };
+
+        // Store user profile details in Firestore
+        await setDoc(doc(db, "users", userCredential.user.uid), finalProfile);
       } else {
         // Validate Login with Zod
         const valData = signInSchema.parse({ email, password });
-        await signInWithEmailAndPassword(auth, valData.email, valData.password);
+        const userCredential = await signInWithEmailAndPassword(auth, valData.email, valData.password);
+        
+        // Load the document instantly and pass to App state to prevent any screen flash or missing config lag
+        const userDocSnap = await getDoc(doc(db, "users", userCredential.user.uid));
+        if (userDocSnap.exists()) {
+          finalProfile = userDocSnap.data() as UserProfile;
+        }
       }
 
-      onAuthSuccess();
+      onAuthSuccess(finalProfile);
     } catch (err: any) {
       console.error(err);
       if (err instanceof z.ZodError) {
@@ -159,18 +175,22 @@ export default function Auth({ onAuthSuccess, onCancel }: AuthProps) {
       const userDocRef = doc(db, "users", result.user.uid);
       const userDocSnap = await getDoc(userDocRef);
       
+      let profileData: UserProfile;
       if (!userDocSnap.exists()) {
-        await setDoc(userDocRef, {
+        profileData = {
           uid: result.user.uid,
           name: result.user.displayName || "Candidate Pro",
           email: result.user.email || "",
           geminiEmail: result.user.email || "",
           geminiApiKey: "",
           createdAt: new Date().toISOString(),
-        });
+        };
+        await setDoc(userDocRef, profileData);
+      } else {
+        profileData = userDocSnap.data() as UserProfile;
       }
       
-      onAuthSuccess();
+      onAuthSuccess(profileData);
     } catch (err: any) {
       console.error("Google Auth error:", err);
       if (err.code === "auth/popup-blocked" || err.message?.includes("popup-blocked") || err.message?.includes("popup")) {
@@ -259,7 +279,7 @@ export default function Auth({ onAuthSuccess, onCancel }: AuthProps) {
         <span className="text-2xl font-display font-black tracking-tight bg-gradient-to-r from-neutral-50 via-neutral-150 to-neutral-300 bg-clip-text text-transparent">PrepWise</span>
       </div>
 
-      <div className="w-full max-w-md space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-8 shadow-2xl backdrop-blur-md">
+      <div className="w-full max-w-md space-y-6 sm:space-y-8 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5 sm:p-8 shadow-2xl backdrop-blur-md">
         <div className="text-center">
           <h2 className="text-3xl font-extrabold tracking-tight">
             {isSignUp ? "Create an account" : "Welcome Back"}

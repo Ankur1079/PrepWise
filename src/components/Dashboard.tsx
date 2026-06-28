@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { auth, db } from "../firebase";
-import { collection, query, where, orderBy, onSnapshot, doc, getDoc, updateDoc } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
 import { UserProfile, InterviewSession, InterviewFeedback, InterviewTemplate } from "../types";
+import AdminFeedbackModal from "./AdminFeedbackModal";
 import {
   Sparkles,
   TrendingUp,
@@ -22,9 +23,14 @@ import {
   ArrowUpRight,
   ShieldCheck,
   Award,
-  RefreshCw
+  RefreshCw,
+  Menu,
+  X,
+  Trash2,
+  MessageSquare
 } from "lucide-react";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
+import { motion, AnimatePresence } from "motion/react";
 
 // Default pre-packaged interview templates
 const DEFAULT_TEMPLATES: InterviewTemplate[] = [
@@ -60,17 +66,23 @@ const DEFAULT_TEMPLATES: InterviewTemplate[] = [
 
 interface DashboardProps {
   user: any;
+  profile: UserProfile | null;
+  onProfileUpdate: (profile: UserProfile) => void;
   onStartInterview: (session: InterviewSession) => void;
   onViewFeedback: (feedback: InterviewFeedback, role: string, topic: string, difficulty: string) => void;
   onShowAuth: () => void;
 }
 
-export default function Dashboard({ user, onStartInterview, onViewFeedback, onShowAuth }: DashboardProps) {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+export default function Dashboard({ user, profile, onProfileUpdate, onStartInterview, onViewFeedback, onShowAuth }: DashboardProps) {
   const [interviews, setInterviews] = useState<InterviewSession[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdminFeedbacks, setShowAdminFeedbacks] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const isAdmin = user && user.email === "ankuryadav1079@gmail.com";
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [settingsSavedToast, setSettingsSavedToast] = useState(false);
 
   // Settings edited parameters
   const [editName, setEditName] = useState("");
@@ -81,9 +93,27 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
   const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [customRole, setCustomRole] = useState("Software Engineer");
   const [customTopic, setCustomTopic] = useState("System Architecture");
-  const [customDifficulty, setCustomDifficulty] = useState<"Entry Level" | "Mid Level" | "Senior Level">("Mid Level");
+  const [customDifficulty, setCustomDifficulty] = useState<"Entry Level" | "Mid Level" | "Senior Level" >("Mid Level");
 
   const [loading, setLoading] = useState(true);
+
+  // Custom practice templates
+  const [customTemplates, setCustomTemplates] = useState<InterviewTemplate[]>([]);
+  const [showAddTemplateModal, setShowAddTemplateModal] = useState(false);
+  const [newTemplateRole, setNewTemplateRole] = useState("");
+  const [newTemplateTopic, setNewTemplateTopic] = useState("");
+  const [newTemplateDesc, setNewTemplateDesc] = useState("");
+  const [newTemplateIcon, setNewTemplateIcon] = useState("Custom");
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  // Populate settings form when profile is loaded or modified
+  useEffect(() => {
+    if (profile) {
+      setEditName(profile.name || "");
+      setEditGeminiEmail(profile.geminiEmail || "");
+      setEditGeminiApiKey(profile.geminiApiKey || "");
+    }
+  }, [profile]);
 
   // Load profile and historical interviews from Firestore
   useEffect(() => {
@@ -92,46 +122,11 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
       const saved = localStorage.getItem("prepwise_trial_sessions");
       const parsed = saved ? JSON.parse(saved) : [];
       setInterviews(parsed);
-      setProfile({
-        uid: "guest",
-        email: "guest@example.com",
-        name: "Guest Explorer",
-        createdAt: new Date().toISOString()
-      } as any);
-      setEditName("Guest Explorer");
       setLoading(false);
       return;
     }
 
-    // 1. Fetch User settings profile
-    const fetchProfile = async () => {
-      try {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data() as UserProfile;
-          setProfile(data);
-          setEditName(data.name || "");
-          setEditGeminiEmail(data.geminiEmail || "");
-          setEditGeminiApiKey(data.geminiApiKey || "");
-        } else {
-          // If no profile document exists, save basic info
-          const defaultProfile: UserProfile = {
-            uid: user.uid,
-            email: user.email || "",
-            name: user.displayName || "Candidate Pro",
-            createdAt: new Date().toISOString()
-          };
-          setProfile(defaultProfile);
-          setEditName(defaultProfile.name);
-        }
-      } catch (err) {
-        console.error("Profile retrieval error:", err);
-      }
-    };
-
-    fetchProfile();
-
-    // 2. Query historical interviews ordered by timestamp in real-time
+    // Query historical interviews ordered by timestamp in real-time
     const interviewsRef = collection(db, "interviews");
     const q = query(
       interviewsRef,
@@ -158,31 +153,149 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
     return () => unsubscribe();
   }, [user]);
 
-  // Save Settings logic
+  // Load custom templates
+  useEffect(() => {
+    if (!user) {
+      const saved = localStorage.getItem("prepwise_custom_templates");
+      const parsed = saved ? JSON.parse(saved) : [];
+      setCustomTemplates(parsed);
+      return;
+    }
+
+    const templatesRef = collection(db, "custom_templates");
+    const q = query(
+      templatesRef,
+      where("userId", "==", user.uid),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const parsed: InterviewTemplate[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        parsed.push({
+          id: docSnap.id,
+          role: data.role || "",
+          topic: data.topic || "",
+          description: data.description || "",
+          icon: data.icon || "Custom",
+        } as InterviewTemplate);
+      });
+      setCustomTemplates(parsed);
+    }, (error) => {
+      console.error("Custom templates subscription failure:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleCreateTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTemplateRole.trim() || !newTemplateTopic.trim() || !newTemplateDesc.trim()) {
+      alert("Please fill in all the fields.");
+      return;
+    }
+
+    setIsSavingTemplate(true);
+    const templateData = {
+      role: newTemplateRole.trim(),
+      topic: newTemplateTopic.trim(),
+      description: newTemplateDesc.trim(),
+      icon: newTemplateIcon.trim() || "Custom",
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      if (!user) {
+        const saved = localStorage.getItem("prepwise_custom_templates");
+        const parsed = saved ? JSON.parse(saved) : [];
+        const newLocalTpl: InterviewTemplate = {
+          id: `local-tpl-${Date.now()}`,
+          ...templateData
+        };
+        const updated = [newLocalTpl, ...parsed];
+        localStorage.setItem("prepwise_custom_templates", JSON.stringify(updated));
+        setCustomTemplates(updated);
+      } else {
+        const { addDoc, collection } = await import("firebase/firestore");
+        await addDoc(collection(db, "custom_templates"), {
+          userId: user.uid,
+          ...templateData
+        });
+      }
+      setNewTemplateRole("");
+      setNewTemplateTopic("");
+      setNewTemplateDesc("");
+      setNewTemplateIcon("Custom");
+      setShowAddTemplateModal(false);
+    } catch (err: any) {
+      console.error("Failed to save custom template:", err);
+      alert("Error saving template: " + (err.message || err));
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmDelete = window.confirm("Are you sure you want to delete this custom template?");
+    if (!confirmDelete) return;
+
+    try {
+      if (!user) {
+        const saved = localStorage.getItem("prepwise_custom_templates");
+        const parsed = saved ? JSON.parse(saved) : [];
+        const filtered = parsed.filter((t: any) => t.id !== templateId);
+        localStorage.setItem("prepwise_custom_templates", JSON.stringify(filtered));
+        setCustomTemplates(filtered);
+      } else {
+        const { doc, deleteDoc } = await import("firebase/firestore");
+        await deleteDoc(doc(db, "custom_templates", templateId));
+      }
+    } catch (err: any) {
+      console.error("Failed to delete custom template:", err);
+      alert("Error deleting template: " + (err.message || err));
+    }
+  };
+
+  // Save Settings logic with instantaneous Optimistic UI updates
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = auth.currentUser;
-    if (!user) return;
-
     setIsSavingSettings(true);
+    
     try {
-      await updateDoc(doc(db, "users", user.uid), {
+      // Create the updated profile object locally
+      const updatedProfile: UserProfile = {
+        ...(profile || { uid: "guest", email: "guest@example.com", name: "Guest Explorer", createdAt: new Date().toISOString() }),
         name: editName,
         geminiEmail: editGeminiEmail,
         geminiApiKey: editGeminiApiKey
-      });
+      };
 
-      setProfile(prev => prev ? {
-        ...prev,
-        name: editName,
-        geminiEmail: editGeminiEmail,
-        geminiApiKey: editGeminiApiKey
-      } : null);
+      if (!user) {
+        localStorage.setItem("prepwise_guest_name", editName);
+        localStorage.setItem("prepwise_guest_email", editGeminiEmail);
+        localStorage.setItem("prepwise_guest_api_key", editGeminiApiKey);
+      } else {
+        await setDoc(doc(db, "users", user.uid), {
+          name: editName,
+          geminiEmail: editGeminiEmail,
+          geminiApiKey: editGeminiApiKey
+        }, { merge: true });
+      }
 
+      // Update UI state in App and close form
+      onProfileUpdate(updatedProfile);
       setShowSettings(false);
-    } catch (err) {
-      console.error("Settings update failed", err);
-      alert("Failed to synchronize settings profile. Please confirm permissions.");
+      
+      // Trigger gorgeous confirmation toast feedback immediately
+      setSettingsSavedToast(true);
+      setTimeout(() => {
+        setSettingsSavedToast(false);
+      }, 3000);
+    } catch (err: any) {
+      console.error("Settings sync failed:", err);
+      alert("Failed to update settings profile: " + (err.message || err));
     } finally {
       setIsSavingSettings(false);
     }
@@ -284,9 +397,13 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
     .slice()
     .reverse()
     .map((item, index) => {
+      const overall = item.score || item.feedback?.overallScore || 0;
       return {
         name: `Interv #${index + 1}`,
-        score: item.score,
+        overallScore: overall,
+        technicalScore: item.feedback?.technicalScore || overall,
+        communicationScore: item.feedback?.communicationScore || overall,
+        problemSolvingScore: item.feedback?.problemSolvingScore || overall,
         date: new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" }),
         topic: item.topic
       };
@@ -364,37 +481,47 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
             <span className="font-display font-black tracking-tight text-2xl bg-gradient-to-r from-neutral-50 via-neutral-150 to-neutral-300 bg-clip-text text-transparent">PrepWise</span>
           </div>
 
-          <div className="flex items-center gap-2.5 sm:gap-4">
-            {auth.currentUser ? (
-              <>
-                {profile && (
-                  <div className="flex items-center gap-2 text-sm text-neutral-400 select-none bg-neutral-900 border border-neutral-800 rounded-full py-1.5 px-3.5 shadow-sm">
-                    <User className="h-3.5 w-3.5 text-purple-400" />
-                    <span className="font-medium text-neutral-300">{profile.name}</span>
-                    {profile.geminiApiKey ? (
-                      <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" title="Custom Key Connection Active" />
-                    ) : (
-                      <span className="inline-flex h-2 w-2 rounded-full bg-indigo-400 animate-pulse" title="System Server Activated" />
-                    )}
-                  </div>
+          <div className="hidden md:flex items-center gap-2.5 sm:gap-4">
+            {profile && (
+              <div className="flex items-center gap-2 text-sm text-neutral-400 select-none bg-neutral-900 border border-neutral-800 rounded-full py-1.5 px-3.5 shadow-sm">
+                <User className="h-3.5 w-3.5 text-purple-400" />
+                <span className="font-medium text-neutral-300">{profile.name}</span>
+                {profile.geminiApiKey ? (
+                  <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" title="Custom Key Connection Active" />
+                ) : (
+                  <span className="inline-flex h-2 w-2 rounded-full bg-indigo-400 animate-pulse" title="System Server Activated" />
                 )}
+              </div>
+            )}
 
-                <button
-                  onClick={() => setShowSettings(true)}
-                  className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700 hover:bg-neutral-800/80 transition cursor-pointer shadow-sm"
-                  title="API Integration Settings"
-                >
-                  <Settings className="h-4.5 w-4.5" />
-                </button>
+            {isAdmin && (
+              <button
+                onClick={() => setShowAdminFeedbacks(true)}
+                className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700 hover:bg-neutral-800/80 transition cursor-pointer shadow-sm relative group"
+                title="View User Feedbacks Hub"
+                id="admin-feedbacks-btn"
+              >
+                <MessageSquare className="h-4.5 w-4.5" />
+                <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+              </button>
+            )}
 
-                <button
-                  onClick={handleSignOut}
-                  className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 text-sm hover:bg-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-700 px-4 py-2 rounded-xl transition font-medium cursor-pointer shadow-sm"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span>Exit</span>
-                </button>
-              </>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:border-neutral-700 hover:bg-neutral-800/80 transition cursor-pointer shadow-sm"
+              title="API Integration Settings"
+            >
+              <Settings className="h-4.5 w-4.5" />
+            </button>
+
+            {auth.currentUser ? (
+              <button
+                onClick={handleSignOut}
+                className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800 text-sm hover:bg-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-700 px-4 py-2 rounded-xl transition font-medium cursor-pointer shadow-sm"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Exit</span>
+              </button>
             ) : (
               <button
                 onClick={onShowAuth}
@@ -405,7 +532,99 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
               </button>
             )}
           </div>
+
+          {/* Mobile hamburger menu button */}
+          <div className="flex items-center md:hidden">
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2.5 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white transition cursor-pointer shadow-sm"
+              aria-expanded={isMobileMenuOpen}
+              id="mobile-menu-toggle-btn"
+            >
+              {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile menu dropdown */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="md:hidden border-t border-neutral-900 bg-neutral-950/95 backdrop-blur-md overflow-hidden"
+              id="mobile-navigation-dropdown"
+            >
+              <div className="px-4 py-6 flex flex-col items-center gap-5">
+                {profile && (
+                  <div className="flex items-center justify-center gap-2 text-sm text-neutral-400 select-none bg-neutral-900 border border-neutral-800 rounded-full py-2.5 px-5 shadow-sm w-full max-w-[280px]">
+                    <User className="h-4 w-4 text-purple-400" />
+                    <span className="font-semibold text-neutral-300">{profile.name}</span>
+                    {profile.geminiApiKey ? (
+                      <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" title="Custom Key Connection Active" />
+                    ) : (
+                      <span className="inline-flex h-2.5 w-2.5 rounded-full bg-indigo-400 animate-pulse" title="System Server Activated" />
+                    )}
+                  </div>
+                )}
+
+                {isAdmin && (
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      setShowAdminFeedbacks(true);
+                    }}
+                    className="flex items-center justify-center gap-2.5 w-full max-w-[280px] h-12 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white transition cursor-pointer shadow-sm text-sm font-semibold"
+                    id="mobile-admin-feedbacks-btn"
+                  >
+                    <MessageSquare className="h-4.5 w-4.5 text-purple-400" />
+                    <span>Feedbacks Hub</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    setShowSettings(true);
+                  }}
+                  className="flex items-center justify-center gap-2.5 w-full max-w-[280px] h-12 rounded-xl border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white transition cursor-pointer shadow-sm text-sm font-semibold"
+                  id="mobile-settings-btn"
+                >
+                  <Settings className="h-4.5 w-4.5" />
+                  <span>API Settings</span>
+                </button>
+
+                {auth.currentUser ? (
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      handleSignOut();
+                    }}
+                    className="flex items-center justify-center gap-2.5 w-full max-w-[280px] h-12 bg-neutral-900 border border-neutral-800 text-sm hover:bg-neutral-800 text-neutral-300 hover:text-white px-4 rounded-xl transition font-medium cursor-pointer shadow-sm"
+                    id="mobile-logout-btn"
+                  >
+                    <LogOut className="h-4.5 w-4.5 text-neutral-400" />
+                    <span>Exit</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      onShowAuth();
+                    }}
+                    className="flex items-center justify-center gap-2.5 w-full max-w-[280px] h-12 bg-purple-600 hover:bg-purple-500 text-sm font-semibold text-white px-5 rounded-xl transition-all cursor-pointer shadow-lg shadow-purple-600/10"
+                    id="mobile-signin-btn"
+                  >
+                    <User className="h-4.5 w-4.5" />
+                    <span>Sign In</span>
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
       <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 space-y-12">
@@ -422,13 +641,13 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
             <p className="text-sm sm:text-base text-neutral-400 leading-relaxed font-normal">
               Practice real interview questions & get instant feedback. Connect via voice simulations and let PrepWise assess your performance in real time.
             </p>
-            <div className="flex flex-wrap gap-3 pt-3 justify-center md:justify-start">
+            <div className="flex flex-row gap-2.5 pt-3 w-full sm:w-auto justify-center md:justify-start">
               <button
                 onClick={() => setShowCustomConfig(true)}
-                className="rounded-xl bg-purple-600 px-6 py-3 text-sm font-semibold text-white hover:bg-purple-500 hover:scale-[1.01] transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-purple-600/15"
+                className="flex-1 sm:flex-initial rounded-xl bg-purple-600 px-4 sm:px-6 py-3 text-xs sm:text-sm font-semibold text-white hover:bg-purple-500 hover:scale-[1.01] transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-purple-600/15"
               >
-                <PlusSquare className="h-4 w-4" />
-                <span>Start an Interview</span>
+                <PlusSquare className="h-4 w-4 shrink-0" />
+                <span className="truncate">Start Interview</span>
               </button>
               
               <button
@@ -437,7 +656,7 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
                     triggerTemplateInterview(DEFAULT_TEMPLATES[0]);
                   }
                 }}
-                className="rounded-xl bg-neutral-900 border border-neutral-800/85 hover:bg-neutral-800 hover:text-white hover:border-neutral-700 px-5 py-3 text-sm font-semibold text-neutral-300 transition cursor-pointer"
+                className="flex-1 sm:flex-initial rounded-xl bg-neutral-900 border border-neutral-800/85 hover:bg-neutral-800 hover:text-white hover:border-neutral-700 px-4 sm:px-5 py-3 text-xs sm:text-sm font-semibold text-neutral-300 transition cursor-pointer text-center truncate"
               >
                 Try Fast Session
               </button>
@@ -445,7 +664,7 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
           </div>
 
           {/* Futuristic CSS Artwork representing laptop and coding badges */}
-          <div className="relative h-60 w-full md:w-[340px] shrink-0 flex items-center justify-center select-none z-10 animate-float-laptop">
+          <div className="relative h-60 w-full md:w-[340px] shrink-0 flex items-center justify-center select-none z-10 animate-float-laptop scale-75 sm:scale-90 md:scale-100 transition-transform duration-300">
             {/* Rotating Words orbiting over the computer */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="absolute animate-orbit-tag-1 bg-purple-500/25 border border-purple-400/60 text-purple-100 font-mono text-[11px] font-extrabold px-2.5 py-1.5 rounded-md backdrop-blur-md shadow-[0_0_12px_rgba(168,85,247,0.3)] whitespace-nowrap">
@@ -531,12 +750,17 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
               </p>
             </div>
 
-            <div className="flex flex-col items-center justify-center space-y-3.5">
-              <div className="relative h-32 w-32 rounded-full border-4 border-neutral-800 flex flex-col items-center justify-center font-bold text-4xl text-purple-400 bg-neutral-950 shadow-inner">
+            <div className="flex flex-row items-center justify-center gap-4.5 sm:gap-6 w-full">
+              <div className="relative h-24 w-24 sm:h-28 sm:w-28 shrink-0 rounded-full border-4 border-neutral-800 flex flex-col items-center justify-center font-bold text-2xl sm:text-3xl text-purple-400 bg-neutral-950 shadow-inner select-none">
                 <span className="font-display font-extrabold">{averageScore}%</span>
-                <span className="text-[10px] uppercase font-bold tracking-wider text-neutral-500 mt-1 font-mono">Average</span>
+                <span className="text-[8px] sm:text-[9px] uppercase font-bold tracking-wider text-neutral-500 mt-0.5 sm:mt-1 font-mono">Average</span>
               </div>
-              <span className="text-sm text-neutral-400">Recorded across <strong className="text-purple-400">{totalCompleted}</strong> sessions</span>
+              <div className="space-y-1 min-w-0">
+                <p className="text-xs sm:text-sm text-neutral-400 font-medium">Overall Performance</p>
+                <p className="text-sm sm:text-base text-neutral-200 font-semibold leading-tight">
+                  Recorded across <strong className="text-purple-400 font-mono font-bold">{totalCompleted}</strong> sessions
+                </p>
+              </div>
             </div>
 
             <div className="border-t border-neutral-800/65 pt-4 space-y-2.5">
@@ -554,7 +778,7 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
           </div>
 
           {/* Historical Progressive Trend Tracker */}
-          <div className="lg:col-span-8 rounded-2xl border border-neutral-900 bg-neutral-900/30 p-6 flex flex-col justify-between">
+          <div className="lg:col-span-8 rounded-2xl border border-neutral-900 bg-neutral-900/30 p-6 flex flex-col justify-between min-w-0">
             <div>
               <h3 className="text-lg font-display font-bold text-neutral-150 flex items-center gap-2">
                 <TrendingUp className="h-5 w-5 text-purple-400" />
@@ -569,22 +793,117 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
             <div className="h-44 w-full mt-4">
               {chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="scoreColor" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                    <XAxis dataKey="name" stroke="#a3a3a3" fontSize={11} tickLine={false} />
-                    <YAxis domain={[0, 100]} stroke="#a3a3a3" fontSize={11} tickLine={false} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: "#171717", borderColor: "#262626", borderRadius: "12px", fontSize: "12px" }}
-                      itemStyle={{ color: "#c084fc" }}
+                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="#737373" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={false}
+                      dy={8}
                     />
-                    <Area type="monotone" dataKey="score" stroke="#c084fc" fillOpacity={1} fill="url(#scoreColor)" strokeWidth={2} />
-                  </AreaChart>
+                    <YAxis 
+                      domain={[0, 100]} 
+                      stroke="#737373" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={false}
+                      dx={-5}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-neutral-950/95 border border-neutral-800 rounded-xl p-3 shadow-xl backdrop-blur-md max-w-xs space-y-2 z-50">
+                              <div>
+                                <p className="text-xs font-bold text-neutral-200">{data.topic}</p>
+                                <p className="text-[10px] text-neutral-500 font-mono font-semibold">{data.date}</p>
+                              </div>
+                              <div className="border-t border-neutral-900 pt-2 space-y-1">
+                                <div className="flex items-center justify-between gap-4 text-xs">
+                                  <span className="flex items-center gap-1.5 text-neutral-400 font-medium">
+                                    <span className="h-2 w-2 rounded-full bg-purple-500" />
+                                    Overall Score:
+                                  </span>
+                                  <span className="font-bold text-purple-400 font-mono">{data.overallScore}%</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 text-xs">
+                                  <span className="flex items-center gap-1.5 text-neutral-400">
+                                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                                    Technical:
+                                  </span>
+                                  <span className="font-semibold text-blue-400 font-mono">{data.technicalScore}%</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 text-xs">
+                                  <span className="flex items-center gap-1.5 text-neutral-400">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                    Communication:
+                                  </span>
+                                  <span className="font-semibold text-emerald-400 font-mono">{data.communicationScore}%</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-4 text-xs">
+                                  <span className="flex items-center gap-1.5 text-neutral-400">
+                                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                    Problem Solving:
+                                  </span>
+                                  <span className="font-semibold text-amber-400 font-mono">{data.problemSolvingScore}%</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Legend 
+                      verticalAlign="top" 
+                      height={30} 
+                      iconType="circle"
+                      iconSize={6}
+                      wrapperStyle={{ fontSize: '10px', color: '#a3a3a3' }}
+                    />
+                    <Line 
+                      name="Overall Score"
+                      type="monotone" 
+                      dataKey="overallScore" 
+                      stroke="#c084fc" 
+                      strokeWidth={3} 
+                      activeDot={{ r: 6, stroke: '#171717', strokeWidth: 2 }}
+                      dot={{ r: 4, stroke: '#c084fc', strokeWidth: 1, fill: '#171717' }}
+                    />
+                    <Line 
+                      name="Technical"
+                      type="monotone" 
+                      dataKey="technicalScore" 
+                      stroke="#3b82f6" 
+                      strokeWidth={1.5} 
+                      strokeDasharray="3 3"
+                      dot={false}
+                      opacity={0.5}
+                    />
+                    <Line 
+                      name="Communication"
+                      type="monotone" 
+                      dataKey="communicationScore" 
+                      stroke="#10b981" 
+                      strokeWidth={1.5} 
+                      strokeDasharray="3 3"
+                      dot={false}
+                      opacity={0.5}
+                    />
+                    <Line 
+                      name="Problem Solving"
+                      type="monotone" 
+                      dataKey="problemSolvingScore" 
+                      stroke="#f59e0b" 
+                      strokeWidth={1.5} 
+                      strokeDasharray="3 3"
+                      dot={false}
+                      opacity={0.5}
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-neutral-500 bg-neutral-950/25 rounded-xl border border-neutral-900">
@@ -597,58 +916,86 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
 
         {/* Guest Trial Session Tracker Banner */}
         {!auth.currentUser && (
-          <div className="rounded-2xl border border-dashed border-purple-500/35 bg-purple-950/5 p-5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-purple-950/5">
-            <div className="space-y-1 text-left">
-              <h4 className="text-sm font-bold text-neutral-100 flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
+          <div className="rounded-2xl border border-dashed border-purple-500/35 bg-purple-950/5 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg shadow-purple-950/5">
+            <div className="space-y-1 text-left min-w-0 flex-1">
+              <h4 className="text-xs sm:text-sm font-bold text-neutral-100 flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-purple-400 animate-pulse shrink-0" />
                 <span>Guest Trial Tracker: {Math.max(0, 3 - interviews.length)} of 3 Free Interviews Left</span>
               </h4>
-              <p className="text-neutral-400 text-xs leading-relaxed max-w-3xl">
-                You are currently preparing as a Guest. Start a mock session to evaluate your competence. Register a free account to persist evaluations permanently, unlock progress progression charts, and enjoy unlimited AI interviews.
+              <p className="text-neutral-400 text-[11px] sm:text-xs leading-relaxed max-w-3xl">
+                Preparing as Guest. Start mock sessions to evaluate competence. Register a free account to persist evaluations permanently and view progress.
               </p>
             </div>
             <button
               onClick={onShowAuth}
-              className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-semibold text-xs text-white shadow-lg shadow-purple-600/15 cursor-pointer shrink-0 transition"
+              className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-semibold text-[11px] sm:text-xs text-white shadow-lg shadow-purple-600/15 cursor-pointer shrink-0 transition w-full sm:w-auto text-center"
             >
-              Sign Up / Login to Save Progress
+              Sign Up / Login
             </button>
           </div>
         )}
 
         {/* Take Interviews Card Templates */}
         <div className="space-y-5">
-          <h2 className="text-2xl font-display font-extrabold tracking-tight text-neutral-100">Practice Templates</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {DEFAULT_TEMPLATES.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-2xl border border-neutral-900 bg-neutral-900/15 p-5 flex flex-col justify-between hover:border-purple-500/25 hover:bg-neutral-900/30 transition duration-300 group shadow-sm"
-              >
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="rounded-lg bg-purple-500/10 border border-purple-500/25 px-2.5 py-1 text-xs font-semibold text-purple-400 capitalize">
-                      {item.role}
-                    </span>
-                    <span className="text-[10px] font-bold text-neutral-600 font-mono tracking-wider">{item.icon}</span>
-                  </div>
-                  <div>
-                    <h4 className="text-base font-display font-bold text-neutral-250 leading-snug group-hover:text-purple-400 transition duration-200">
-                      {item.topic}
-                    </h4>
-                    <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mt-2">{item.description}</p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => triggerTemplateInterview(item)}
-                  className="w-full mt-5 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white px-4 py-2.5 text-sm font-semibold text-center hover:bg-purple-600 hover:border-transparent transition flex items-center justify-center gap-1.5 cursor-pointer"
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-2xl font-display font-extrabold tracking-tight text-neutral-100">Practice Templates</h2>
+            <button
+              onClick={() => setShowAddTemplateModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-semibold text-xs text-white shadow-lg shadow-purple-600/15 cursor-pointer flex items-center justify-center gap-1.5 transition hover:scale-[1.01] w-full sm:w-auto"
+            >
+              <PlusSquare className="h-4 w-4" />
+              <span>Create Custom Template</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch">
+            {[...DEFAULT_TEMPLATES, ...customTemplates].map((item) => {
+              const isCustom = !DEFAULT_TEMPLATES.some((t) => t.id === item.id);
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-2xl border border-neutral-900 bg-neutral-900/15 p-5 flex flex-col justify-between hover:border-purple-500/25 hover:bg-neutral-900/30 transition duration-300 group shadow-sm h-full relative"
                 >
-                  <span>Start Practice</span>
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="rounded-lg bg-purple-500/10 border border-purple-500/25 px-2.5 py-1 text-xs font-semibold text-purple-400 capitalize">
+                        {item.role}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-neutral-600 font-mono tracking-wider">{item.icon}</span>
+                        {isCustom && (
+                          <button
+                            onClick={(e) => handleDeleteTemplate(item.id, e)}
+                            title="Delete custom template"
+                            className="p-1 rounded-md text-neutral-500 hover:text-red-400 hover:bg-neutral-850 transition cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-base font-display font-bold text-neutral-250 leading-snug group-hover:text-purple-400 transition duration-200 flex flex-wrap items-center gap-1.5">
+                        <span>{item.topic}</span>
+                        {isCustom && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 font-bold border border-neutral-750 uppercase tracking-wider scale-90 inline-block">
+                            Custom
+                          </span>
+                        )}
+                      </h4>
+                      <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mt-2">{item.description}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => triggerTemplateInterview(item)}
+                    className="w-full mt-5 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white px-4 py-3 text-sm font-semibold text-center hover:bg-purple-600 hover:border-transparent transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Start Practice</span>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -670,32 +1017,32 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
               interviews.map((session) => (
                 <div
                   key={session.id}
-                  className="rounded-2xl border border-neutral-900 bg-neutral-900/15 p-5 hover:border-neutral-800 hover:bg-neutral-900/25 transition duration-300 flex flex-col sm:flex-row items-center justify-between gap-5 shadow-sm"
+                  className="rounded-2xl border border-neutral-900 bg-neutral-900/15 p-4 sm:p-5 hover:border-neutral-800 hover:bg-neutral-900/25 transition duration-300 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 sm:gap-5 shadow-sm"
                 >
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4.5 w-full">
-                    <div className="rounded-xl bg-purple-500/10 p-3 text-purple-400 shrink-0 border border-purple-500/15">
-                      <Award className="h-5.5 w-5.5" />
+                  <div className="flex flex-row items-start gap-3.5 w-full min-w-0">
+                    <div className="rounded-xl bg-purple-500/10 p-2.5 sm:p-3 text-purple-400 shrink-0 border border-purple-500/15">
+                      <Award className="h-5 w-5 sm:h-5.5 sm:w-5.5" />
                     </div>
 
-                    <div className="space-y-1.5">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-purple-400 font-mono">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <h4 className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-purple-400 font-mono">
                         {session.difficulty} • {session.role}
                       </h4>
-                      <h3 className="text-base font-display font-bold text-neutral-150">
+                      <h3 className="text-sm sm:text-base font-display font-bold text-neutral-150 truncate">
                         Topic Focus: <span className="text-neutral-200">{session.topic}</span>
                       </h3>
-                      <div className="flex flex-wrap items-center gap-2.5 text-xs text-neutral-500">
-                        <span className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs text-neutral-500">
+                        <span className="flex items-center gap-1 shrink-0">
                           <Calendar className="h-3.5 w-3.5" />
                           <span>{new Date(session.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                         </span>
                         <span>•</span>
-                        <span>Duration: {Math.floor((session.duration || 0) / 60)}m {(session.duration || 0) % 60}s</span>
+                        <span className="shrink-0">Duration: {Math.floor((session.duration || 0) / 60)}m {(session.duration || 0) % 60}s</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4.5 shrink-0 justify-end w-full sm:w-auto">
+                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 w-full sm:w-auto mt-2 sm:mt-0">
                     {session.score !== undefined && (
                       <div className="text-right">
                         <span className="rounded-xl bg-purple-500/10 border border-purple-500/25 px-3 py-1.5 text-sm font-black text-purple-400 font-mono">
@@ -707,7 +1054,7 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
                     {session.feedback && (
                       <button
                         onClick={() => onViewFeedback(session.feedback!, session.role, session.topic, session.difficulty)}
-                        className="rounded-xl border border-neutral-800 hover:bg-purple-600 hover:border-transparent px-4 py-2 text-sm font-semibold text-neutral-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.01]"
+                        className="rounded-xl border border-neutral-800 hover:bg-purple-600 hover:border-transparent px-4 py-3 text-sm font-semibold text-neutral-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.01]"
                       >
                         <span>Analyze Feedback</span>
                         <ArrowUpRight className="h-4 w-4" />
@@ -787,7 +1134,7 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
             <div className="flex gap-3 pt-2">
               <button
                 onClick={() => setShowCustomConfig(false)}
-                className="w-1/2 rounded-lg bg-neutral-800 hover:bg-neutral-700 py-2.5 text-xs font-semibold text-neutral-300 transition cursor-pointer"
+                className="w-1/2 rounded-lg bg-neutral-800 hover:bg-neutral-700 py-3.5 text-xs font-semibold text-neutral-300 transition cursor-pointer"
               >
                 Close
               </button>
@@ -796,11 +1143,105 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
                   setShowCustomConfig(false);
                   triggerCustomInterview();
                 }}
-                className="w-1/2 rounded-lg bg-purple-600 hover:bg-purple-500 py-2.5 text-xs font-semibold text-white transition cursor-pointer"
+                className="w-1/2 rounded-lg bg-purple-600 hover:bg-purple-500 py-3.5 text-xs font-semibold text-white transition cursor-pointer"
               >
                 Launch Interview
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Custom Template Modal */}
+      {showAddTemplateModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-md">
+          <div className="w-full max-w-md rounded-3xl border border-neutral-800 bg-neutral-900 p-6 sm:p-8 space-y-6 shadow-2xl">
+            <div className="space-y-2">
+              <h3 className="text-xl font-display font-bold text-neutral-100 flex items-center gap-2">
+                <PlusSquare className="h-5.5 w-5.5 text-purple-400" />
+                <span>Create Custom Template</span>
+              </h3>
+              <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed">
+                Add a new persistent practice template to your templates collection.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateTemplate} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  Target Job Position / Role
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newTemplateRole}
+                  onChange={(e) => setNewTemplateRole(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-950/60 py-2.5 px-3 text-xs text-neutral-200 outline-none transition focus:border-purple-500/50"
+                  placeholder="e.g. React Native Developer"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  Target Topic Focus
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newTemplateTopic}
+                  onChange={(e) => setNewTemplateTopic(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-950/60 py-2.5 px-3 text-xs text-neutral-200 outline-none transition focus:border-purple-500/50"
+                  placeholder="e.g. Native Bridges & Threading"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  Template Description
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={newTemplateDesc}
+                  onChange={(e) => setNewTemplateDesc(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-950/60 py-2.5 px-3 text-xs text-neutral-200 outline-none transition focus:border-purple-500/50 resize-none"
+                  placeholder="Brief summary of what this practice session targets..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+                  Visual Badge (Icon)
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={newTemplateIcon}
+                  onChange={(e) => setNewTemplateIcon(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-950/60 py-2.5 px-3 text-xs text-neutral-200 outline-none transition focus:border-purple-500/50"
+                  placeholder="e.g. REACT, JS, iOS, DB, CUSTOM"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddTemplateModal(false)}
+                  className="w-1/2 rounded-lg bg-neutral-800 hover:bg-neutral-700 py-3.5 text-xs font-semibold text-neutral-300 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingTemplate}
+                  className="w-1/2 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 py-3.5 text-xs font-semibold text-white transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isSavingTemplate && <RefreshCw className="h-3 w-3 animate-spin" />}
+                  <span>{isSavingTemplate ? "Saving..." : "Create Template"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -988,6 +1429,28 @@ export default function Dashboard({ user, onStartInterview, onViewFeedback, onSh
           </div>
         </div>
       )}
+
+      {/* Instant Notification Toast */}
+      {settingsSavedToast && (
+        <div className="fixed bottom-6 right-6 flex items-center gap-3 bg-neutral-900/95 border border-emerald-500/30 text-white rounded-xl py-3 px-4 shadow-xl z-50 animate-bounce backdrop-blur">
+          <div className="h-8 w-8 bg-emerald-500/10 text-emerald-400 rounded-lg flex items-center justify-center shrink-0">
+            <svg className="h-4.5 w-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-neutral-150">Settings Profile Synced</p>
+            <p className="text-[10px] text-neutral-400 leading-none mt-1">Key parameters integrated securely!</p>
+          </div>
+        </div>
+      )}
+
+      {/* Admin User Feedbacks Viewer */}
+      <AnimatePresence>
+        {showAdminFeedbacks && isAdmin && (
+          <AdminFeedbackModal onClose={() => setShowAdminFeedbacks(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

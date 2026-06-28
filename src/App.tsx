@@ -7,7 +7,8 @@ import Auth from "./components/Auth";
 import Dashboard from "./components/Dashboard";
 import InterviewCall from "./components/InterviewCall";
 import FeedbackView from "./components/FeedbackView";
-import { Sparkles, RefreshCw, BadgeAlert, ArrowUpRight } from "lucide-react";
+import FeedbackModal from "./components/FeedbackModal";
+import { Sparkles, RefreshCw, BadgeAlert, ArrowUpRight, MessageSquare, Heart } from "lucide-react";
 
 type ViewState = "dashboard" | "call" | "feedback";
 
@@ -21,6 +22,7 @@ export default function App() {
   const [view, setView] = useState<ViewState>("dashboard");
   const [activeSession, setActiveSession] = useState<InterviewSession | null>(null);
   const [activeFeedback, setActiveFeedback] = useState<InterviewFeedback | null>(null);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   // Detail keys for active evaluation review card
   const [evaluationMeta, setEvaluationMeta] = useState<{
@@ -40,18 +42,44 @@ export default function App() {
           const userDoc = await getDoc(doc(db, "users", currentUser.uid));
           if (userDoc.exists()) {
             setProfile(userDoc.data() as UserProfile);
+          } else {
+            // Keep a basic fallback profile
+            const defaultProfile: UserProfile = {
+              uid: currentUser.uid,
+              email: currentUser.email || "",
+              name: currentUser.displayName || "Candidate Pro",
+              createdAt: new Date().toISOString()
+            };
+            setProfile(defaultProfile);
           }
         } catch (err) {
           console.error("Auth user document fetch crash:", err);
         }
       } else {
-        setProfile(null);
+        const savedGuestName = localStorage.getItem("prepwise_guest_name") || "Guest Explorer";
+        const savedGuestEmail = localStorage.getItem("prepwise_guest_email") || "";
+        const savedGuestApiKey = localStorage.getItem("prepwise_guest_api_key") || "";
+        setProfile({
+          uid: "guest",
+          email: "guest@example.com",
+          name: savedGuestName,
+          geminiEmail: savedGuestEmail,
+          geminiApiKey: savedGuestApiKey,
+          createdAt: new Date().toISOString()
+        } as any);
       }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
+
+  const handleAuthSuccess = (profileData?: UserProfile) => {
+    if (profileData) {
+      setProfile(profileData);
+    }
+    setShowAuth(false);
+  };
 
   const handleStartInterview = (session: InterviewSession) => {
     setActiveSession(session);
@@ -108,55 +136,15 @@ export default function App() {
         <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-purple-950/15 blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-indigo-950/20 blur-[130px]" />
         
-        {/* Masterful Vector Wave Lines with glowing gradients */}
-        <svg className="absolute inset-0 w-full h-full opacity-35 sm:opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <linearGradient id="purple-wave-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#a855f7" stopOpacity="0.45" />
-              <stop offset="50%" stopColor="#6366f1" stopOpacity="0.15" />
-              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.01" />
-            </linearGradient>
-            <linearGradient id="topographic-vortex-gradient" x1="100%" y1="100%" x2="50%" y2="0%">
-              <stop offset="0%" stopColor="#c084fc" stopOpacity="0.5" />
-              <stop offset="60%" stopColor="#6366f1" stopOpacity="0.12" />
-              <stop offset="100%" stopColor="#1e1b4b" stopOpacity="0" />
-            </linearGradient>
-          </defs>
+        {/* Immersive Volumetric Central Spotlights */}
+        <div className="glowing-violet-spotlight-1" />
+        <div className="glowing-violet-spotlight-2" />
+        
+        {/* Layered Neon Glowing Grid Lines */}
+        <div className="glowing-violet-grid-bg" />
+        <div className="glowing-violet-grid-bright-core" />
+        
 
-          {/* Left-side Organic Topographic Waves (28 concentric spline wave paths) */}
-          <g stroke="url(#purple-wave-gradient)" strokeWidth="1.25" fill="none">
-            {Array.from({ length: 28 }).map((_, i) => {
-              const offset = i * 16;
-              const d = `M -100 ${100 + offset * 0.45} 
-                         C 200 ${120 + offset * 0.8}, 350 ${-40 + offset * 0.25}, 500 ${150 + offset * 0.55}
-                         S 700 ${380 + offset * 1.1}, 850 ${420 + offset * 0.9} 
-                         S 1000 ${320 + offset * 0.6}, 1100 ${450 + offset * 0.85}
-                         S 1250 ${700 + offset * 1.25}, 1600 ${850 + offset * 1.3}`;
-              return <path key={`left-contour-${i}`} d={d} opacity={0.35 - i * 0.01} />;
-            })}
-          </g>
-
-          {/* Right-side Concentric Topographical Vortex (36 twisted nested curves) */}
-          <g stroke="url(#topographic-vortex-gradient)" strokeWidth="1.4" fill="none">
-            {Array.from({ length: 36 }).map((_, i) => {
-              const scaleX = 180 + i * 13.5;
-              const scaleY = 120 + i * 19.5;
-              const rotate = 32 + i * 1.6;
-              const opacity = 0.45 - i * 0.011;
-              return (
-                <ellipse
-                  key={`topo-vortex-${i}`}
-                  cx="1150"
-                  cy="520"
-                  rx={scaleX}
-                  ry={scaleY}
-                  transform={`rotate(${rotate} 1150 520)`}
-                  opacity={Math.max(0.01, opacity)}
-                />
-              );
-            })}
-          </g>
-        </svg>
       </div>
 
       {loading ? (
@@ -228,7 +216,7 @@ export default function App() {
         </div>
       ) : showAuth && !user ? (
         <Auth
-          onAuthSuccess={() => setShowAuth(false)}
+          onAuthSuccess={handleAuthSuccess}
           onCancel={() => setShowAuth(false)}
         />
       ) : (
@@ -255,11 +243,32 @@ export default function App() {
           )}
 
           {view === "dashboard" && (
-            <Dashboard
+            <>
+              <Dashboard
+                user={user}
+                profile={profile}
+                onProfileUpdate={setProfile}
+                onStartInterview={handleStartInterview}
+                onViewFeedback={handleViewHistoricalFeedback}
+                onShowAuth={() => setShowAuth(true)}
+              />
+              <button
+                onClick={() => setShowFeedbackModal(true)}
+                className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4.5 py-3.5 rounded-full bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs tracking-wide shadow-xl shadow-purple-600/25 border border-purple-500/35 cursor-pointer transition hover:scale-[1.03] active:scale-95 group"
+                id="floating-feedback-btn"
+                title="Send Feedback"
+              >
+                <MessageSquare className="h-4.5 w-4.5 text-purple-100 group-hover:rotate-6 transition-transform" />
+                <span>Feedback & Help</span>
+              </button>
+            </>
+          )}
+
+          {showFeedbackModal && (
+            <FeedbackModal
+              onClose={() => setShowFeedbackModal(false)}
               user={user}
-              onStartInterview={handleStartInterview}
-              onViewFeedback={handleViewHistoricalFeedback}
-              onShowAuth={() => setShowAuth(true)}
+              profile={profile}
             />
           )}
 
