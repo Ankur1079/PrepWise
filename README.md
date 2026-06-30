@@ -1,59 +1,65 @@
 # PrepWise - Your AI Interview Practice Partner
 
-PrepWise is a modern, responsive, and robust full-stack web application designed to help users prepare for professional technical and non-technical job interviews. Designed with developer ergonomics in mind, PrepWise provides real-time chat, voice-enabled conversation simulations, automated comprehensive feedback reports, and interactive analytics to track interview progress over time.
+PrepWise is a modern, responsive, and robust full-stack web application designed to help users prepare for professional technical and non-technical job interviews. Designed with developer ergonomics in mind, PrepWise provides real-time chat, immersive voice-enabled conversation simulations, automated comprehensive feedback reports, and interactive analytics to track interview progress over time.
 
 ---
 
-## 🚀 Key Features
+## 🚀 Core Features & Capabilities
 
-*   **Real-time Live Calls / Interactive Dynamic Chat**: Speak or type answers to realistic, AI-driven behavioral and technical questions in real-time.
-*   **Web Speech Recognition & Synthesis**: Immersive mock experience utilizing the Web Speech API for real-time speech-to-text input, combined with automated, lifelike text-to-speech feedback (with a visual toggle to mute/unmute bot audio outputs). *Note: Web Speech voice capture requires running the app in a dedicated tab/browser window due to browser sandbox restrictions in iframe previews.*
-*   **Automated Professional Analysis**: Custom evaluation reports detailing candidate performance across key parameters, constructive feedback, suggestions for development, and curated study tracks.
-*   **User Dashboard & History Tracks**: Persistent tracking of simulated sessions, visual performance trends utilizing clean dynamic charting, and individual authentication.
-*   **Dual-Option API Integrations**: Powered by standard enterprise-backed backend endpoints or optional user-configured personal Gemini keys for flexible customization.
+*   **🎙️ Immersive Voice Mode & Live Calls**: 
+    Engage in a realistic voice call simulation. The system leverages the browser's native **Web Speech API** for high-accuracy speech-to-text voice recognition, combined with lifelike text-to-speech feedback. Real-time controls include a persistent audio output mute/unmute toggle.
+*   **📊 Animated Real-Time Audio Visualizer**:
+    Includes an interactive visualizer component (`AudioVisualizer`) that renders a multi-bar waveform reflecting current voice/mic states. Features color-coded fluid animations:
+    *   **Purple/Indigo Gradient**: Active bot speaking states.
+    *   **Emerald/Teal Gradient**: Candidate listening/recording states (scales dynamically based on real microphone volume).
+    *   **Neutral Gray**: Idle/Silent states.
+*   **📝 Comprehensive Performance Scorecard**:
+    Every interview session generates a complete professional assessment across four core dimensions:
+    *   *Technical Skill*
+    *   *Communication*
+    *   *Problem Solving*
+    *   *Confidence*
+    It provides constructive general feedback, clear suggestions for improvement, and a custom-tailored *Study Guide* with suggested resources.
+*   **📂 Customizable & Pre-Defined Interview Templates**:
+    Start practicing instantly with standard mock interview templates (such as *Frontend Developer*, *Backend Engineer*, *Product Manager*, *Behavioral Prep*, or *System Design*), or build and save your own custom templates dynamically.
+*   **📈 Analytics Dashboard & History Tracking**:
+    Monitor progress using dynamic data charts (area and bar plots powered by **Recharts**) to track score trends. View full chronological history logs of all mock interviews with their generated scorecard summaries.
+*   **🔐 Seamless User Authentication**:
+    Robust secure account creation and sign-in powered by **Firebase Authentication** (supporting Email/Password and Anonymous access) to synchronize records across multiple devices.
+*   **💬 Interactive User Feedback & Admin Terminal**:
+    *   *User Feedback*: In-app modal allows candidates to submit feedback, ratings, and feature requests.
+    *   *Admin Terminal*: A real-time monitoring modal to review user feedback and manage entries (including single-click deletion) directly.
 
 ---
 
 ## 🛠️ Comprehensive Tech Stack Explanation
 
-PrepWise is architected with a full-stack structure for secure API proxying and cloud-ready resilience. Here is the layout of the technologies used and their design motivation:
+PrepWise is built with a highly resilient full-stack architecture designed for maximum performance, security, and stability.
 
 ### 📺 Frontend Architecture (Client-Side)
-
-The client is designed as a single-page app (SPA) serving lightning-fast interactive views with rigorous UI polish.
-
-1.  **React 19 & Vite 6**: Built on top of React's newest architecture for optimized rendering, combined with Vite’s extremely fast hot-module builds and compiling pipeline.
-2.  **Tailwind CSS v4 (Post-CSS Native)**: Uses Tailwind CSS v4 to style components with clean utility classes, consistent spacing rhythms, and responsive layouts (`sm:`, `md:`, `lg:`).
-3.  **Framer Motion (`motion/react`)**: Smooth, micro-interactive transitions, page-fade entrances, and visual card/element movements for feedback containers and modal dialogues.
-4.  **Recharts**: Modern responsive analytical data charts (area and bar plots) used on the candidate performance metric screens to visualize score fluctuations over time.
-5.  **Lucide React**: Clean, lightweight, professional vector UI icons.
+The client-side uses a Single Page Application (SPA) structure styled for responsive, desktop-first precision with mobile-first code:
+1.  **React 19 & Vite 6**: High-speed, modern virtual DOM rendering, coupled with Vite's rapid compiling pipeline.
+2.  **Tailwind CSS v4 (Post-CSS Native)**: Uses native `@import "tailwindcss";` styling to declare responsive layouts and highly customized UI elements.
+3.  **Framer Motion (`motion/react`)**: Implements premium, high-fidelity micro-interactions, page-fade entrances, and layout transitions for modal dialogues and feedback card menus.
+4.  **Recharts**: Provides responsive, elegant analytical graphics visualizing candidate score trends.
+5.  **Lucide React**: Clean, lightweight, professional vector iconography.
 
 ### ⚙️ Backend Architecture (Server-Side)
-
-To guarantee that critical API keys and developer configurations are kept absolutely private from standard client-side inspect tools, we use an Express.js backend as a security proxy layer.
-
-1.  **Node.js (Express.js)**: A lightweight, highly scalable routing framework handling core endpoints like chat streaming proxies, performance grading engines, and health checks.
-2.  **Dynamic Binding**: Designed to respect live container requirements (such as Google Cloud Run, Render, or Railway) by dynamically binding the process listener using:
-    ```javascript
-    const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-    ```
-3.  **Vite Middleware Direct Mode**: In development mode (`NODE_ENV !== "production"`), the server spins up a custom Vite development server on demand, integrating internal assets and avoiding WebSocket delays. In production, it falls back seamlessly to serving static compiled resources inside the `/dist` directory.
+To guarantee API key safety, an Express server acts as a proxy for secure transactions:
+1.  **Node.js (Express.js)**: Runs as a security proxy layer for backend services, such as coordinating streaming prompts and performance analytics.
+2.  **Vite Middleware Mode**: Under development (`NODE_ENV !== "production"`), mounts Vite's middleware directly within Express to facilitate real-time hot building. Under production, the server serves static compiled assets directly from the `/dist` directory.
+3.  **Environment Binding**: Configured to bind on port `3000` and host `0.0.0.0` to comply with standard cloud container routing requirements (such as Google Cloud Run).
 
 ### 🤖 AI Engine
+The backend intelligence is powered directly by Google's fast and cost-effective **Gemini 3.5 Flash** model:
+1.  **`@google/genai` TypeScript SDK**: Integrates modern, structured, and non-deprecated methods (`ai.models.generateContent`).
+2.  **Exponential Backoff Resiliency**: Features a built-in retry mechanism that catches transient `503 Service Unavailable`, `429 Rate Limit`, or high-demand network errors, retrying up to 3 times before presenting a user-friendly error state.
+3.  **Prompt Engineering Guarding**: Robust regex sanitization prevents empty inputs or unauthorized formatting from causing crashes.
 
-The intelligence layer is driven directly by Google’s fast and cost-effective **Gemini 3.5 Flash** model.
-
-1.  **`@google/genai` TypeScript SDK**: Structured, modern AI API client using standard non-deprecated method architectures (`ai.models.generateContent`).
-2.  **Exponential Backoff Resiliency**: The system automatically captures transient `503 Service Unavailable`, `429 Rate Limit`, or high-demand spike errors and gracefully retries up to 3 times before displaying a beautiful, readable suggestion to the user:
-    ```typescript
-    // Adaptive Retry Mechanism
-    const delay = initialDelay * Math.pow(2, attempt - 1) + Math.random() * 500;
-    ```
-3.  **Authentication Guarding**: Immediate regex validation on user-defined key entries preventing empty or invalid credential crashes, and outputting actionable messages for authentication failures.
-
-### 🗄️ Persistence & Authentication
-
-*   **Firebase Core**: Integrates Firebase Auth and Firestore Database to synchronize candidate accounts and protect history tracks. To keep third-party variables from crashing the server, the app is engineered with client-side environment fail-safes using a fallback initialization layout (`(import.meta as any).env`) which guarantees compiling stability when environment records are partially pending.
+### 🗄️ Persistence & Client-Side Resiliency
+*   **Firebase Firestore**: Handles real-time synchronization of candidate histories, templates, and feedbacks.
+*   **No-Index Client Sorting**: Database query performance is optimized via client-side sorting logic, completely bypassing traditional Firestore composite index requirements (`Failed to load resource: net::ERR_BLOCKED_BY_CLIENT` or composite index errors are eliminated) to ensure a smooth out-of-the-box user experience.
+*   **Offline/Local Storage Fallback**: Gracefully falls back to browser `localStorage` when credentials are not yet initialized or when the client loses internet connectivity.
 
 ---
 
@@ -61,6 +67,8 @@ The intelligence layer is driven directly by Google’s fast and cost-effective 
 
 ```text
 ├── server.ts                  # Main Express Server entry & Gemini API proxy routing
+├── firebase-blueprint.json    # Initial DB schema blueprints
+├── firestore.rules            # Firestore security rules
 ├── src/
 │   ├── main.tsx               # Client React mount & initial routing
 │   ├── App.tsx                # Root layout container
@@ -70,7 +78,10 @@ The intelligence layer is driven directly by Google’s fast and cost-effective 
 │       ├── Auth.tsx           # Firebase Auth and registration modals
 │       ├── Dashboard.tsx      # Landing dashboard, user statistics, dynamic graphs
 │       ├── InterviewCall.tsx  # Dynamic voice/text speech mock interaction module
-│       └── ...
+│       ├── AudioVisualizer.tsx# Multi-frequency dynamic waveform rendering
+│       ├── FeedbackView.tsx   # Detailed scorecards, suggested study tracker & resource logs
+│       ├── FeedbackModal.tsx  # User feedback and rating submittal panel
+│       └── AdminFeedbackModal.tsx # Administrative workspace to monitor & manage system feedback
 ├── package.json               # Native NPM package script workflows and dependencies
 ├── vite.config.ts             # Tailwind CSS build pipelines + Vite specifications
 └── tsconfig.json              # Structured production compile typings
@@ -97,6 +108,7 @@ VITE_FIREBASE_API_KEY=""
 VITE_FIREBASE_PROJECT_ID=""
 VITE_FIREBASE_APP_ID=""
 VITE_FIREBASE_AUTH_DOMAIN=""
+VITE_FIREBASE_MEASUREMENT_ID=""
 ```
 
 ### 3. Installation & Booting
