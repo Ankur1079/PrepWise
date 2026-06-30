@@ -1,0 +1,161 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    @apply antialiased bg-neutral-950 text-neutral-200 font-sans;
+  }
+}
+
+@keyframes float-laptop {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(0.5deg);
+  }
+}
+
+@keyframes orbit-1 {
+  0% { transform: rotate(0deg) translateX(120px) rotate(0deg) scale(1); opacity: 1; z-index: 30; }
+  25% { transform: rotate(90deg) translateX(120px) rotate(-90deg) scale(0.85); opacity: 0.6; z-index: 10; }
+  50% { transform: rotate(180deg) translateX(120px) rotate(-180deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  75% { transform: rotate(270deg) translateX(120px) rotate(-270deg) scale(0.85); opacity: 0.6; z-index: 10; }
+  100% { transform: rotate(360deg) translateX(120px) rotate(-360deg) scale(1); opacity: 1; z-index: 30; }
+}
+
+@keyframes orbit-2 {
+  0% { transform: rotate(60deg) translateX(120px) rotate(-60deg) scale(0.8); opacity: 0.5; z-index: 10; }
+  25% { transform: rotate(150deg) translateX(120px) rotate(-150deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  50% { transform: rotate(240deg) translateX(120px) rotate(-240deg) scale(0.9); opacity: 0.8; z-index: 30; }
+  75% { transform: rotate(330deg) translateX(120px) rotate(-330deg) scale(1); opacity: 1; z-index: 30; }
+  100% { transform: rotate(420deg) translateX(120px) rotate(-420deg) scale(0.8); opacity: 0.5; z-index: 10; }
+}
+
+@keyframes orbit-3 {
+  0% { transform: rotate(120deg) translateX(120px) rotate(-120deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  25% { transform: rotate(210deg) translateX(120px) rotate(-210deg) scale(0.9); opacity: 0.8; z-index: 30; }
+  50% { transform: rotate(300deg) translateX(120px) rotate(-300deg) scale(1); opacity: 1; z-index: 30; }
+  75% { transform: rotate(390deg) translateX(120px) rotate(-390deg) scale(0.8); opacity: 0.5; z-index: 10; }
+  100% { transform: rotate(480deg) translateX(120px) rotate(-480deg) scale(0.75); opacity: 0.3; z-index: 5; }
+}
+
+@keyframes orbit-4 {
+  0% { transform: rotate(180deg) translateX(120px) rotate(-180deg) scale(1); opacity: 1; z-index: 30; }
+  25% { transform: rotate(270deg) translateX(120px) rotate(-270deg) scale(0.85); opacity: 0.6; z-index: 10; }
+  50% { transform: rotate(360deg) translateX(120px) rotate(-360deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  75% { transform: rotate(450deg) translateX(120px) rotate(-450deg) scale(0.85); opacity: 0.6; z-index: 10; }
+  100% { transform: rotate(540deg) translateX(120px) rotate(-540deg) scale(1); opacity: 1; z-index: 30; }
+}
+
+@keyframes orbit-5 {
+  0% { transform: rotate(240deg) translateX(120px) rotate(-240deg) scale(0.8); opacity: 0.5; z-index: 10; }
+  25% { transform: rotate(330deg) translateX(120px) rotate(-330deg) scale(1); opacity: 1; z-index: 30; }
+  50% { transform: rotate(420deg) translateX(120px) rotate(-420deg) scale(0.8); opacity: 0.5; z-index: 10; }
+  75% { transform: rotate(510deg) translateX(120px) rotate(-510deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  100% { transform: rotate(600deg) translateX(120px) rotate(-600deg) scale(0.8); opacity: 0.5; z-index: 10; }
+}
+
+@keyframes orbit-6 {
+  0% { transform: rotate(300deg) translateX(120px) rotate(-300deg) scale(0.75); opacity: 0.3; z-index: 5; }
+  25% { transform: rotate(390deg) translateX(120px) rotate(-390deg) scale(0.8); opacity: 0.5; z-index: 10; }
+  50% { transform: rotate(480deg) translateX(120px) rotate(-480deg) scale(1); opacity: 1; z-index: 30; }
+  75% { transform: rotate(570deg) translateX(120px) rotate(-570deg) scale(0.85); opacity: 0.6; z-index: 10; }
+  100% { transform: rotate(660deg) translateX(120px) rotate(-660deg) scale(0.75); opacity: 0.3; z-index: 5; }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+.animate-float-laptop {
+  animation: float-laptop 5s ease-in-out infinite;
+}
+
+.animate-scanline {
+  animation: scanline 4s linear infinite;
+}
+
+.animate-orbit-tag-1 {
+  animation: orbit-1 12s linear infinite;
+}
+.animate-orbit-tag-2 {
+  animation: orbit-2 12s linear infinite;
+}
+.animate-orbit-tag-3 {
+  animation: orbit-3 12s linear infinite;
+}
+.animate-orbit-tag-4 {
+  animation: orbit-4 12s linear infinite;
+}
+.animate-orbit-tag-5 {
+  animation: orbit-5 12s linear infinite;
+}
+.animate-orbit-tag-6 {
+  animation: orbit-6 12s linear infinite;
+}
+
+/* Premium Glowing Violet Grid Background & Volumetric Spotlights */
+.glowing-violet-grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(to right, rgba(139, 92, 246, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(139, 92, 246, 0.05) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-position: center;
+  mask-image: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.8) 10%, rgba(0,0,0,0.2) 50%, transparent 90%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.8) 10%, rgba(0,0,0,0.2) 50%, transparent 90%);
+  opacity: 0.4;
+}
+
+.glowing-violet-grid-bright-core {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(to right, rgba(168, 85, 247, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(168, 85, 247, 0.1) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-position: center;
+  mask-image: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.9) 5%, rgba(0,0,0,0.3) 25%, transparent 60%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.9) 5%, rgba(0,0,0,0.3) 25%, transparent 60%);
+  opacity: 0.3;
+}
+
+.glowing-violet-spotlight-1 {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80vw;
+  height: 80vh;
+  max-width: 900px;
+  max-height: 900px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, rgba(99, 102, 241, 0.03) 45%, transparent 70%);
+  filter: blur(100px);
+  opacity: 0.6;
+}
+
+.glowing-violet-spotlight-2 {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40vw;
+  height: 40vh;
+  max-width: 450px;
+  max-height: 450px;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.12) 0%, rgba(139, 92, 246, 0.04) 35%, transparent 70%);
+  filter: blur(70px);
+  opacity: 0.5;
+}

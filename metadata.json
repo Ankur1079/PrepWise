@@ -1,0 +1,8 @@
+{
+  "name": "PrepWise",
+  "description": "Your AI Interview practice partner. Conduct real-time voice and chat calls, get professional performance analysis, and track historical progress.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
